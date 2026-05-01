@@ -1,0 +1,17 @@
+playit
+*.log
+logs/
+*.lock
+STOP_SERVER
+*.tar.gz
+*.zip
+*.tmp
+*.jfr
+*.jfr.tmp
+plugins/spark/tmp/
+!world/playerdata/
+!world/playerdata/*.dat
+!world/stats/
+!world/stats/*.json
+!world/advancements/
+!world/advancements/*.json

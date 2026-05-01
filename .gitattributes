@@ -1,0 +1,8 @@
+*.png binary -delta
+*.dat_mcr binary -delta
+*.jar binary -delta
+*.nbt binary -delta
+*.mca binary -delta
+*.dat_old binary -delta
+*.ogg binary -delta
+*.zip binary -delta
