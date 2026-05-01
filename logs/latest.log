@@ -1,0 +1,278 @@
+[07:29:29] [ServerMain/INFO]: [bootstrap] Running Java 25 (OpenJDK 64-Bit Server VM 25.0.2+10-LTS; Microsoft Microsoft-13053558) on Linux 6.8.0-1044-azure (amd64)
+[07:29:29] [ServerMain/INFO]: [bootstrap] Loading Paper 26.1.2-51-main@5d62ec0 (2026-04-27T16:54:06Z) for Minecraft 26.1.2
+[07:29:29] [ServerMain/INFO]: [PluginInitializerManager] Initializing plugins...
+[07:29:31] [ServerMain/INFO]: [PluginInitializerManager] Initialized 14 plugins
+[07:29:31] [ServerMain/INFO]: [PluginInitializerManager] Paper plugins (1):
+ - Veinminer (2.7.0)
+[07:29:31] [ServerMain/INFO]: [PluginInitializerManager] Bukkit plugins (13):
+ - GSit (3.3.3), Geyser-Spigot (2.9.5-SNAPSHOT), LuckPerms (5.5.42), MobIgnore (1.3.0), SimpleTpa (8.0), SkinsRestorer (15.12.0), Timber (1.8.2), UltraSetHome (1.7.9), ViaBackwards (5.9.0), ViaVersion (5.9.0), connect (latest-prerelease-dirty), floodgate (2.2.5-SNAPSHOT (b132-5a72b6a)), voicechat (2.6.16)
+[07:29:39] [ServerMain/INFO]: Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, profilesHost=https://api.mojang.com, name=PROD]
+[07:29:43] [ServerMain/INFO]: Loaded 1515 recipes
+[07:29:43] [ServerMain/INFO]: Loaded 1617 advancements
+[07:29:43] [ServerMain/INFO]: [ca.spottedleaf.dataconverter.minecraft.datatypes.MCTypeRegistry] Initialising converters for DataConverter...
+[07:29:44] [ServerMain/INFO]: [ca.spottedleaf.dataconverter.minecraft.datatypes.MCTypeRegistry] Finished initialising converters for DataConverter in 690.2ms
+[07:29:44] [Server thread/INFO]: Starting minecraft server version 26.1.2
+[07:29:44] [Server thread/INFO]: Loading properties
+[07:29:44] [Server thread/INFO]: This server is running Paper version 26.1.2-51-main@5d62ec0 (2026-04-27T16:54:06Z) (Implementing API version 26.1.2.build.51-beta)
+[07:29:44] [Server thread/INFO]: [spark] This server bundles the spark profiler. For more information please visit https://docs.papermc.io/paper/profiling
+[07:29:44] [Server thread/INFO]: Server Ping Player Sample Count: 12
+[07:29:44] [Server thread/INFO]: Using 4 threads for Netty based IO
+[07:29:45] [Server thread/INFO]: [MoonriseCommon] Paper is using 1 worker threads, 1 I/O threads
+[07:29:46] [Server thread/INFO]: Default game type: SURVIVAL
+[07:29:46] [Server thread/INFO]: Generating keypair
+[07:29:46] [Server thread/INFO]: Starting Minecraft server on 0.0.0.0:64249
+[07:29:46] [Server thread/INFO]: Paper: Using libdeflate (Linux x86_64) compression from Velocity.
+[07:29:46] [Server thread/INFO]: Paper: Using OpenSSL 3.x.x (Linux x86_64) cipher from Velocity.
+[07:29:47] [Server thread/INFO]: [ViaVersion] Loading server plugin ViaVersion v5.9.0
+[07:29:47] [Server thread/INFO]: [ViaVersion] ViaVersion 5.9.0 is now loaded. Registering protocol transformers and injecting...
+[07:29:47] [Via-Mappingloader-1/INFO]: [ViaVersion] Loading block connection mappings ...
+[07:29:48] [Via-Mappingloader-1/INFO]: [ViaVersion] Using FastUtil Long2ObjectOpenHashMap for block connections
+[07:29:48] [Server thread/INFO]: [ViaBackwards] Loading translations...
+[07:29:48] [Server thread/INFO]: [ViaBackwards] Registering protocols...
+[07:29:49] [Server thread/INFO]: [floodgate] Loading server plugin floodgate v2.2.5-SNAPSHOT (b132-5a72b6a)
+[07:29:50] [Server thread/WARN]: [floodgate] en_ is not a supported Floodgate language.
+[07:29:50] [Server thread/INFO]: [floodgate] Took 1,551ms to boot Floodgate
+[07:29:50] [Server thread/INFO]: [ViaBackwards] Loading server plugin ViaBackwards v5.9.0
+[07:29:50] [Server thread/INFO]: [Geyser-Spigot] Loading server plugin Geyser-Spigot v2.9.5-SNAPSHOT
+[07:29:51] [Server thread/INFO]: [Geyser-Spigot] Loading extensions...
+[07:29:51] [Server thread/INFO]: [Geyser-Spigot] Loaded 0 extension(s)
+[07:29:51] [Server thread/INFO]: [SkinsRestorer] Loading server plugin SkinsRestorer v15.12.0
+[07:29:51] [Server thread/INFO]: [MobIgnore] Loading server plugin MobIgnore v1.3.0
+[07:29:51] [Server thread/INFO]: [voicechat] Loading server plugin voicechat v2.6.16
+[07:29:51] [Server thread/INFO]: [GSit] Loading server plugin GSit v3.3.3
+[07:29:51] [Server thread/INFO]: [Veinminer] Loading server plugin Veinminer v2.7.0
+[07:29:52] [Server thread/INFO]: [Veinminer] Detected platform: Paper
+[07:29:52] [Server thread/INFO]: [LuckPerms] Loading server plugin LuckPerms v5.5.42
+[07:29:52] [Server thread/INFO]: [LuckPerms] Loading configuration...
+[07:29:53] [Server thread/INFO]: [UltraSetHome] Loading server plugin UltraSetHome v1.7.9
+[07:29:53] [Server thread/INFO]: [Timber] Loading server plugin Timber v1.8.2
+[07:29:53] [Server thread/INFO]: [connect] Loading server plugin connect vlatest-prerelease-dirty
+[07:29:54] [Server thread/WARN]: [connect] en_ is not a supported language.
+[07:29:54] [Server thread/INFO]: [connect] Took 1,176ms to boot Connect
+[07:29:54] [Server thread/INFO]: [SimpleTpa] Loading server plugin SimpleTpa v8.0
+[07:29:54] [Server thread/INFO]: Server permissions file permissions.yml is empty, ignoring it
+[07:29:54] [Server thread/INFO]: [SkinsRestorer] Enabling SkinsRestorer v15.12.0
+[07:29:55] [Server thread/INFO]: [SkinsRestorer] Running on Minecraft 26.1.2.
+[07:29:55] [Server thread/INFO]: [SkinsRestorer] Floodgate skin listener registered
+[07:29:56] [Server thread/INFO]: [SkinsRestorer] Using paper join listener!
+[07:29:56] [Server thread/INFO]: [Veinminer] Enabling Veinminer v2.7.0
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer] ----------------------------------------------
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer]     +==================+
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer]     |   SkinsRestorer  |
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer]     |------------------|
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer]     |  Standalone Mode |
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer]     +==================+
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer] ----------------------------------------------
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer]     Version: 15.12.0
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer]     Commit: 2903414
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer]     This is the latest version!
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer] ----------------------------------------------
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer] Do you have issues? Read our troubleshooting guide: https://skinsrestorer.net/docs/troubleshooting
+[07:29:56] [Folia Async Scheduler Thread #1/INFO]: [SkinsRestorer] Want to support SkinsRestorer or receive priority support? Become a supporter: https://skinsrestorer.net/pricing
+[07:29:56] [Server thread/INFO]: [LuckPerms] Enabling LuckPerms v5.5.42
+[07:29:56] [DefaultDispatcher-worker-1/INFO]: [VeinminerUpdater] veinminer is up to date
+[07:29:57] [Server thread/INFO]:         __    
+[07:29:57] [Server thread/INFO]:   |    |__)   LuckPerms v5.5.42
+[07:29:57] [Server thread/INFO]:   |___ |      Running on Bukkit - Paper
+[07:29:57] [Server thread/INFO]: 
+[07:29:57] [Server thread/INFO]: [LuckPerms] Loading storage provider... [H2]
+[07:29:57] [Server thread/INFO]: [LuckPerms] Loading internal permission managers...
+[07:29:58] [Server thread/INFO]: [LuckPerms] Performing initial data load...
+[07:29:58] [Server thread/INFO]: [LuckPerms] Successfully enabled. (took 2255ms)
+[07:29:58] [Server thread/WARN]: **** SERVER IS RUNNING IN OFFLINE/INSECURE MODE!
+[07:29:58] [Server thread/WARN]: The server will make no attempt to authenticate usernames. Beware.
+[07:29:58] [Server thread/WARN]: While this makes the game possible to play without internet access, it also opens up the ability for hackers to connect with any username they choose.
+[07:29:58] [Server thread/WARN]: To change this, set "online-mode" to "true" in the server.properties file.
+[07:29:58] [Server thread/INFO]: Preparing level "world"
+[07:29:59] [Server thread/INFO]: Loading 0 persistent chunks for level 'minecraft:overworld'...
+[07:29:59] [Server thread/INFO]: Preparing spawn area: 100%
+[07:29:59] [Server thread/INFO]: Prepared spawn area in 4 ms
+[07:29:59] [Server thread/INFO]: Loading 0 persistent chunks for level 'minecraft:the_nether'...
+[07:29:59] [Server thread/INFO]: Prepared spawn area in 2 ms
+[07:29:59] [Server thread/INFO]: Loading 0 persistent chunks for level 'minecraft:the_end'...
+[07:29:59] [Server thread/INFO]: Prepared spawn area in 1 ms
+[07:29:59] [Server thread/INFO]: Done preparing level "world" (1.116s)
+[07:29:59] [Server thread/INFO]: [ViaVersion] Enabling ViaVersion v5.9.0
+[07:29:59] [Server thread/INFO]: [ViaVersion] ViaVersion detected server version: 26.1-26.1.2 (775)
+[07:29:59] [Server thread/INFO]: [floodgate] Enabling floodgate v2.2.5-SNAPSHOT (b132-5a72b6a)
+[07:30:00] [Server thread/INFO]: [ViaBackwards] Enabling ViaBackwards v5.9.0
+[07:30:00] [Server thread/INFO]: [Geyser-Spigot] Enabling Geyser-Spigot v2.9.5-SNAPSHOT
+[07:30:00] [Server thread/ERROR]: Error occurred while enabling Geyser-Spigot v2.9.5-SNAPSHOT (Is it up to date?)
+java.lang.ExceptionInInitializerError
+	at Geyser-Spigot.jar//org.geysermc.geyser.platform.spigot.shaded.org.incendo.cloud.bukkit.parser.ItemStackParser.<init>(ItemStackParser.java:121) ~[?:?]
+	at Geyser-Spigot.jar//org.geysermc.geyser.platform.spigot.shaded.org.incendo.cloud.bukkit.parser.ItemStackParser.itemStackParser(ItemStackParser.java:83) ~[?:?]
+	at Geyser-Spigot.jar//org.geysermc.geyser.platform.spigot.shaded.org.incendo.cloud.bukkit.BukkitParsers.register(BukkitParsers.java:75) ~[?:?]
+	at Geyser-Spigot.jar//org.geysermc.geyser.platform.spigot.shaded.org.incendo.cloud.bukkit.BukkitCommandManager.<init>(BukkitCommandManager.java:99) ~[?:?]
+	at Geyser-Spigot.jar//org.geysermc.geyser.platform.spigot.shaded.org.incendo.cloud.paper.LegacyPaperCommandManager.<init>(LegacyPaperCommandManager.java:92) ~[?:?]
+	at Geyser-Spigot.jar//org.geysermc.geyser.platform.spigot.GeyserSpigotPlugin.onEnable(GeyserSpigotPlugin.java:195) ~[?:?]
+	at org.bukkit.plugin.java.JavaPlugin.setEnabled(JavaPlugin.java:279) ~[paper-api-26.1.2.build.51-beta.jar:?]
+	at io.papermc.paper.plugin.manager.PaperPluginInstanceManager.enablePlugin(PaperPluginInstanceManager.java:207) ~[paper-26.1.2.jar:26.1.2-51-5d62ec0]
+	at io.papermc.paper.plugin.manager.PaperPluginManagerImpl.enablePlugin(PaperPluginManagerImpl.java:109) ~[paper-26.1.2.jar:26.1.2-51-5d62ec0]
+	at org.bukkit.plugin.SimplePluginManager.enablePlugin(SimplePluginManager.java:520) ~[paper-api-26.1.2.build.51-beta.jar:?]
+	at org.bukkit.craftbukkit.CraftServer.enablePlugin(CraftServer.java:637) ~[paper-26.1.2.jar:26.1.2-51-5d62ec0]
+	at org.bukkit.craftbukkit.CraftServer.enablePlugins(CraftServer.java:594) ~[paper-26.1.2.jar:26.1.2-51-5d62ec0]
+	at net.minecraft.server.MinecraftServer.initPostWorld(MinecraftServer.java:680) ~[paper-26.1.2.jar:26.1.2-51-5d62ec0]
+	at net.minecraft.server.dedicated.DedicatedServer.initServer(DedicatedServer.java:386) ~[paper-26.1.2.jar:26.1.2-51-5d62ec0]
+	at net.minecraft.server.MinecraftServer.runServer(MinecraftServer.java:1301) ~[paper-26.1.2.jar:26.1.2-51-5d62ec0]
+	at net.minecraft.server.MinecraftServer.lambda$spin$0(MinecraftServer.java:304) ~[paper-26.1.2.jar:26.1.2-51-5d62ec0]
+	at java.base/java.lang.Thread.run(Thread.java:1474) ~[?:?]
+Caused by: java.lang.IllegalArgumentException: Couldn't find createItemStack method on ItemInput
+	at Geyser-Spigot.jar//org.geysermc.geyser.platform.spigot.shaded.org.incendo.cloud.bukkit.internal.CraftBukkitReflection.firstNonNullOrThrow(CraftBukkitReflection.java:125) ~[?:?]
+	at Geyser-Spigot.jar//org.geysermc.geyser.platform.spigot.shaded.org.incendo.cloud.bukkit.parser.ItemStackParser$ModernParser.<clinit>(ItemStackParser.java:158) ~[?:?]
+	... 17 more
+[07:30:00] [Server thread/INFO]: [Geyser-Spigot] Disabling Geyser-Spigot v2.9.5-SNAPSHOT
+[07:30:00] [Server thread/INFO]: [Geyser-Spigot] Geyser shutdown successfully.
+[07:30:00] [Server thread/INFO]: [MobIgnore] Enabling MobIgnore v1.3.0
+[07:30:00] [Server thread/INFO]: [MobIgnore] MobIgnore enabled!
+[07:30:00] [Server thread/INFO]: [voicechat] Enabling voicechat v2.6.16
+[07:30:00] [Server thread/INFO]: [voicechat] Initializing compatibility for version 26.1.2.build.51-beta
+[07:30:00] [Server thread/INFO]: [voicechat] Compatibility version 20
+[07:30:01] [Server thread/INFO]: [voicechat] Successfully initialized commodore command completion
+[07:30:01] [Server thread/INFO]: [voicechat] Successfully added ViaVersion mappings
+[07:30:01] [Server thread/INFO]: [GSit] Enabling GSit v3.3.3
+[07:30:01] [Server thread/INFO]: [GSit] The plugin was successfully enabled.
+[07:30:01] [Server thread/INFO]: [UltraSetHome] Enabling UltraSetHome v1.7.9
+[07:30:01] [Server thread/INFO]: [Timber] Enabling Timber v1.8.2
+[07:30:02] [Server thread/WARN]: LogBlock isn't injected! 
+[07:30:02] [Server thread/WARN]: Install the plugin to improve tree detection 
+[07:30:02] [Server thread/WARN]: Download link: https://www.curseforge.com/minecraft/bukkit-plugins/logblocks 
+[07:30:02] [Server thread/INFO]: [connect] Enabling connect vlatest-prerelease-dirty
+[07:30:02] [Server thread/INFO]: [connect] Endpoint name: channyanh
+[07:30:02] [Server thread/INFO]: [connect] Your public address: channyanh.play.minekube.net
+[07:30:02] [Server thread/INFO]: [SimpleTpa] Enabling SimpleTpa v8.0
+[07:30:02] [Server thread/INFO]: [SimpleTpa] If you need support contact me at https://discord.gg/SZUkza9
+[07:30:02] [Server thread/INFO]: [SimpleTpa] Simple Tpa has been enabled on version 8.0
+[07:30:02] [Server thread/INFO]: Enabled metrics. You may opt-out by changing plugins/bStats/config.yml
+[07:30:03] [pool-15-thread-1/INFO]: [connect] A new version of Connect is available: 0.7.2 (current: latest-prerelease-dirty)
+[07:30:03] [pool-15-thread-1/INFO]: [connect] Download: https://github.com/minekube/connect-java/releases/latest
+[07:30:03] [Server thread/INFO]: [spark] Starting background profiler...
+[07:30:03] [OkHttp https://watch-connect.minekube.net/.../ERROR]: [connect] Connection error with WatchService: java.net.SocketException: Network is unreachable
+[07:30:03] [OkHttp https://watch-connect.minekube.net/.../INFO]: [connect] Trying to reconnect in 0.739s...
+[07:30:03] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:overworld
+[07:30:03] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:the_nether
+[07:30:03] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:the_end
+[07:30:03] [Server thread/INFO]: ThreadedAnvilChunkStorage (world): All chunks are saved
+[07:30:03] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM-1): All chunks are saved
+[07:30:03] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM1): All chunks are saved
+[07:30:03] [Server thread/INFO]: ThreadedAnvilChunkStorage: All dimensions are saved
+[07:30:03] [Server thread/INFO]: Running delayed init tasks
+[07:30:03] [Server thread/INFO]: Done (35.705s)! For help, type "help"
+[07:30:03] [Craft Scheduler Thread - 2 - ViaVersion/INFO]: [ViaVersion] Finished mapping loading, shutting down loader executor.
+[07:30:03] [Server thread/INFO]: [voicechat] Loading plugins
+[07:30:03] [Server thread/INFO]: [voicechat] Loaded 0 plugin(s)
+[07:30:03] [Server thread/INFO]: [voicechat] Initializing plugins
+[07:30:03] [Server thread/INFO]: [voicechat] Initialized 0 plugin(s)
+[07:30:03] [Server thread/WARN]: [voicechat] Running in offline mode - Voice chat encryption is not secure!
+[07:30:03] [VoiceChatServerThread/INFO]: [voicechat] Using server-ip as bind address: 0.0.0.0
+[07:30:03] [VoiceChatServerThread/INFO]: [voicechat] Voice host is '62.141.62.24'
+[07:30:03] [Paper Async Task Handler Thread - 1/INFO]: *** Currently you are 1 build(s) behind ***
+[07:30:03] [Paper Async Task Handler Thread - 1/INFO]: *** It is highly recommended to download the latest build from https://papermc.io/downloads/paper ***
+[07:30:03] [VoiceChatServerThread/INFO]: [voicechat] Voice chat server started at 0.0.0.0:45691
+[07:30:03] [Server thread/INFO]: [UltraSetHome] You are using the latest version of UltraSetHome.
+[07:30:04] [OkHttp https://watch-connect.minekube.net/.../INFO]: [connect] Started watching for new player sessions
+[07:30:15] [Server thread/INFO]: [HorriblePlayerLoginEventHack] You have plugins listening to the PlayerLoginEvent, this will cause re-configuration APIs to be unavailable: [LuckPerms, connect]
+[07:30:15] [Server thread/INFO]: [connect] Connect tunneled player logged in as ChannyAnh (UUID: 4a04a41e-aabb-3a5b-80fa-a4ec17078cc4)
+[07:30:18] [Server thread/INFO]: ChannyAnh joined the game
+[07:30:18] [Server thread/INFO]: ChannyAnh[/171.251.237.229:0] logged in with entity id 1 at ([minecraft:overworld]608.5884893759724, 87.0, 1897.300000011921)
+[07:30:19] [Server thread/INFO]: [voicechat] Received secret request of ChannyAnh (20)
+[07:30:19] [Server thread/INFO]: [voicechat] Sent secret to ChannyAnh
+[07:30:28] [Server thread/INFO]: Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, profilesHost=https://api.mojang.com, name=PROD]
+[07:31:12] [Server thread/INFO]: ChannyAnh issued server command: /stop
+[07:31:12] [Server thread/INFO]: [ChannyAnh: Stopping the server]
+[07:31:12] [Server thread/INFO]: Stopping server
+[07:31:12] [Server thread/INFO]: [SimpleTpa] Disabling SimpleTpa v8.0
+[07:31:12] [Server thread/INFO]: [SimpleTpa] If you need support contact me at https://discord.gg/SZUkza9
+[07:31:12] [Server thread/INFO]: [SimpleTpa] Simple Tpa has been disabled on version 8.0
+[07:31:12] [Server thread/INFO]: [connect] Disabling connect vlatest-prerelease-dirty
+[07:31:12] [Server thread/INFO]: [connect] Stopped watching for sessions
+[07:31:12] [Server thread/INFO]: [Timber] Disabling Timber v1.8.2
+[07:31:12] [OkHttp TaskRunner/WARN]: Exception in thread "OkHttp TaskRunner" java.lang.IllegalStateException: The plugin classloader for connect has thrown a zip file error.
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at org.bukkit.plugin.java.PluginClassLoader.findClass(PluginClassLoader.java:228)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:557)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at org.bukkit.plugin.java.PluginClassLoader.loadClass0(PluginClassLoader.java:180)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at org.bukkit.plugin.java.PluginClassLoader.loadClass(PluginClassLoader.java:175)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.ws.RealWebSocket.writeOneFrame$okhttp(RealWebSocket.kt:667)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.ws.RealWebSocket$WriterTask.runOnce(RealWebSocket.kt:620)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.concurrent.TaskRunner.runTask(TaskRunner.kt:116)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.concurrent.TaskRunner.access$runTask(TaskRunner.kt:42)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.concurrent.TaskRunner$runnable$1.run(TaskRunner.kt:65)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.lang.Thread.run(Thread.java:1474)
+[07:31:12] [OkHttp TaskRunner/WARN]: Caused by: java.lang.IllegalStateException: zip file closed
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.zip.ZipFile.ensureOpen(ZipFile.java:826)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.zip.ZipFile.getEntry(ZipFile.java:290)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.jar.JarFile.getEntry(JarFile.java:505)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.jar.JarFile.getJarEntry(JarFile.java:460)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at org.bukkit.plugin.java.PluginClassLoader.findClass(PluginClassLoader.java:223)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	... 12 more
+[07:31:12] [Server thread/INFO]: [UltraSetHome] Disabling UltraSetHome v1.7.9
+[07:31:12] [Server thread/INFO]: [LuckPerms] Disabling LuckPerms v5.5.42
+[07:31:12] [Server thread/INFO]: [LuckPerms] Starting shutdown process...
+[07:31:12] [Server thread/INFO]: [LuckPerms] Closing storage...
+[07:31:12] [Server thread/INFO]: [LuckPerms] Goodbye!
+[07:31:12] [Server thread/INFO]: [Veinminer] Disabling Veinminer v2.7.0
+[07:31:12] [Server thread/INFO]: [GSit] Disabling GSit v3.3.3
+[07:31:12] [Server thread/INFO]: [GSit] The plugin was successfully disabled.
+[07:31:12] [Server thread/INFO]: [voicechat] Disabling voicechat v2.6.16
+[07:31:12] [Server thread/INFO]: [MobIgnore] Disabling MobIgnore v1.3.0
+[07:31:12] [Server thread/INFO]: [MobIgnore] MobIgnore disabled!
+[07:31:12] [Server thread/INFO]: [SkinsRestorer] Disabling SkinsRestorer v15.12.0
+[07:31:12] [Server thread/INFO]: [ViaBackwards] Disabling ViaBackwards v5.9.0
+[07:31:12] [Server thread/INFO]: [floodgate] Disabling floodgate v2.2.5-SNAPSHOT (b132-5a72b6a)
+[07:31:12] [Server thread/INFO]: [ViaVersion] Disabling ViaVersion v5.9.0
+[07:31:12] [Server thread/INFO]: [ViaVersion] ViaVersion has been disabled; uninjected the platform and shut down the scheduler.
+[07:31:12] [Server thread/INFO]: Saving players
+[07:31:12] [defaultEventLoopGroup-4-2/INFO]: [connect] Connect tunneled player ChannyAnh disconnected
+[07:31:12] [OkHttp TaskRunner/WARN]: Exception in thread "OkHttp TaskRunner" java.lang.IllegalStateException: The plugin classloader for connect has thrown a zip file error.
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at org.bukkit.plugin.java.PluginClassLoader.findClass(PluginClassLoader.java:228)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:557)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at org.bukkit.plugin.java.PluginClassLoader.loadClass0(PluginClassLoader.java:180)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at org.bukkit.plugin.java.PluginClassLoader.loadClass(PluginClassLoader.java:175)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:490)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.ws.RealWebSocket.writeOneFrame$okhttp(RealWebSocket.kt:667)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.ws.RealWebSocket$WriterTask.runOnce(RealWebSocket.kt:620)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.concurrent.TaskRunner.runTask(TaskRunner.kt:116)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.concurrent.TaskRunner.access$runTask(TaskRunner.kt:42)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at connect-spigot (3).jar//okhttp3.internal.concurrent.TaskRunner$runnable$1.run(TaskRunner.kt:65)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.lang.Thread.run(Thread.java:1474)
+[07:31:12] [OkHttp TaskRunner/WARN]: Caused by: java.lang.IllegalStateException: zip file closed
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.zip.ZipFile.ensureOpen(ZipFile.java:826)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.zip.ZipFile.getEntry(ZipFile.java:290)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.jar.JarFile.getEntry(JarFile.java:505)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at java.base/java.util.jar.JarFile.getJarEntry(JarFile.java:460)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	at org.bukkit.plugin.java.PluginClassLoader.findClass(PluginClassLoader.java:223)
+[07:31:12] [OkHttp TaskRunner/WARN]: 	... 12 more
+[07:31:12] [Server thread/INFO]: Saving worlds
+[07:31:13] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:overworld
+[07:31:13] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'minecraft:overworld'
+[07:31:13] [Server thread/INFO]: [ChunkHolderManager] Halted chunk system for world 'minecraft:overworld'
+[07:31:13] [Server thread/INFO]: [ChunkHolderManager] Saving all chunkholders for world 'minecraft:overworld'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Saved 676 block chunks, 676 entity chunks, 0 poi chunks in world 'minecraft:overworld' in 2.30s
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk I/O to halt for world 'minecraft:overworld'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Halted I/O scheduler for world 'minecraft:overworld'
+[07:31:15] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:the_nether
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'minecraft:the_nether'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Halted chunk system for world 'minecraft:the_nether'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Saving all chunkholders for world 'minecraft:the_nether'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Saved 0 block chunks, 0 entity chunks, 0 poi chunks in world 'minecraft:the_nether' in 0.00s
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk I/O to halt for world 'minecraft:the_nether'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Halted I/O scheduler for world 'minecraft:the_nether'
+[07:31:15] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:the_end
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'minecraft:the_end'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Halted chunk system for world 'minecraft:the_end'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Saving all chunkholders for world 'minecraft:the_end'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Saved 0 block chunks, 0 entity chunks, 0 poi chunks in world 'minecraft:the_end' in 0.00s
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk I/O to halt for world 'minecraft:the_end'
+[07:31:15] [Server thread/INFO]: [ChunkHolderManager] Halted I/O scheduler for world 'minecraft:the_end'
+[07:31:15] [Server thread/INFO]: ThreadedAnvilChunkStorage (world): All chunks are saved
+[07:31:15] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM-1): All chunks are saved
+[07:31:15] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM1): All chunks are saved
+[07:31:15] [Server thread/INFO]: ThreadedAnvilChunkStorage: All dimensions are saved
+[07:31:15] [Server thread/INFO]: Waiting for all RegionFile I/O tasks to complete...
+[07:31:15] [Server thread/INFO]: All RegionFile I/O tasks to complete
+[07:31:15] [Server thread/INFO]: [MoonriseCommon] Awaiting termination of worker pool for up to 60s...
+[07:31:15] [Server thread/INFO]: [MoonriseCommon] Awaiting termination of I/O pool for up to 60s...

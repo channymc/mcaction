@@ -1,0 +1,2146 @@
+name: 🎮 Minecraft Server (Paper) v24
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      mc_version:
+        description: 'Minecraft version (empty = latest stable)'
+        required: false
+        default: ''
+      paper_build:
+        description: 'Paper build number (empty = latest)'
+        required: false
+        default: ''
+      tunnel_type:
+        description: 'Tunnel: playit | none'
+        required: false
+        default: ''
+
+concurrency:
+  group: minecraft-server
+  cancel-in-progress: false
+
+jobs:
+  server:
+    name: 🖥️ Paper Server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+
+    steps:
+
+      - name: 🧹 Free runner disk space
+        run: |
+          echo "📦 Disk before: $(df -h / | awk 'NR==2{print $4}') free"
+          sudo rm -rf /opt/hostedtoolcache || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc /usr/local/.ghcup || true
+          sudo apt-get remove -y --purge             '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' 'php.*'             azure-cli google-cloud-cli google-chrome-stable             firefox powershell mono-devel libgl1-mesa-dri             2>/dev/null || true
+          sudo apt-get autoremove -y 2>/dev/null || true
+          sudo apt-get clean 2>/dev/null || true
+          sudo swapoff -a 2>/dev/null || true
+          sudo rm -f /mnt/swapfile /swapfile 2>/dev/null || true
+          sudo fallocate -l 4G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          echo "✅ Swap: $(free -h | awk '/^Swap/{print $2}') enabled"
+          echo "✅ Disk after: $(df -h / | awk 'NR==2{print $4}') free" 
+
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          fetch-tags: false
+          persist-credentials: false
+          token: ${{ secrets.FINE_GRAINED_PAT }}
+
+      - name: ☕ Setup Java 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: 📦 Cache system packages
+        uses: awalsh128/cache-apt-pkgs-action@v1.4.3
+        with:
+          packages: jq zip
+          version: 1.0
+
+      - name: 🛡️ Harden .gitignore
+        run: |
+          declare -a PROTECTED=(
+            "paper.jar"
+            "playit"
+            "*.log"
+            "logs/"
+            "*.lock"
+            "STOP_SERVER"
+            "*.tar.gz"
+            "*.zip"
+            "*.tmp"
+            "*.jfr"
+            "*.jfr.tmp"
+            "plugins/spark/tmp/"
+          )
+          CHANGED=false
+          for entry in "${PROTECTED[@]}"; do
+            if ! grep -qxF "$entry" .gitignore 2>/dev/null; then
+              echo "$entry" >> .gitignore
+              CHANGED=true
+            fi
+          done
+
+          declare -a FORCE_INCLUDE=(
+            "!world/playerdata/"
+            "!world/playerdata/*.dat"
+            "!world/stats/"
+            "!world/stats/*.json"
+            "!world/advancements/"
+            "!world/advancements/*.json"
+          )
+          for entry in "${FORCE_INCLUDE[@]}"; do
+            if ! grep -qxF "$entry" .gitignore 2>/dev/null; then
+              echo "$entry" >> .gitignore
+              CHANGED=true
+            fi
+          done
+
+          for dir in world/playerdata world/stats world/advancements; do
+            mkdir -p "$dir"
+            if [ ! -f "${dir}/.gitkeep" ]; then
+              touch "${dir}/.gitkeep"
+              git add "${dir}/.gitkeep"
+              CHANGED=true
+              echo "✅ Created ${dir}/.gitkeep"
+            fi
+          done
+
+          if $CHANGED; then
+            git add .gitignore
+            echo "✅ .gitignore hardened + player-data dirs pinned"
+          else
+            echo "✅ .gitignore + player-data dirs already hardened"
+          fi
+
+      - name: 🗜️ Configure git storage optimizations
+        run: |
+          declare -A GITATTRS=(
+            ["*.jar"]="binary -delta"
+            ["*.mca"]="binary -delta"
+            ["*.nbt"]="binary -delta"
+            ["*.dat"]="binary -delta"
+            ["*.dat_old"]="binary -delta"
+            ["*.dat_mcr"]="binary -delta"
+            ["*.png"]="binary -delta"
+            ["*.ogg"]="binary -delta"
+            ["*.zip"]="binary -delta"
+          )
+          CHANGED=false
+          for pattern in "${!GITATTRS[@]}"; do
+            attr="${GITATTRS[$pattern]}"
+            if ! grep -qF "$pattern" .gitattributes 2>/dev/null; then
+              printf '%s %s\n' "$pattern" "$attr" >> .gitattributes
+              CHANGED=true
+            fi
+          done
+          if $CHANGED; then
+            git add .gitattributes
+            echo "✅ .gitattributes updated with binary/-delta entries"
+          else
+            echo "✅ .gitattributes already configured"
+          fi
+
+          git config pack.compression     9
+          git config pack.window          50
+          git config pack.depth           50
+          git config pack.threads         0
+          git config core.bigFileThreshold 50m
+          git config gc.auto              0
+          git config gc.autoPackLimit     0
+          echo "✅ git pack settings applied"
+
+          REPO_MB=$(du -sm .git 2>/dev/null | cut -f1)
+          echo "📦 .git size on checkout: ${REPO_MB} MB"
+          if (( REPO_MB > 300 )); then
+            echo "⚙️  Large .git detected — running initial cleanup..."
+            git reflog expire --expire=now --expire-unreachable=now --all 2>/dev/null || true
+            git repack -a -d --depth=50 --window=50 --quiet 2>/dev/null || true
+            git prune --expire=now --quiet 2>/dev/null || true
+            NEW_MB=$(du -sm .git 2>/dev/null | cut -f1)
+            echo "✅ After cleanup: ${NEW_MB} MB (saved $(( REPO_MB - NEW_MB )) MB)"
+          fi
+
+      - name: 🔍 Resolve Paper version & build
+        id: paper
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.mc_version }}
+          INPUT_BUILD:   ${{ github.event.inputs.paper_build }}
+        run: |
+          if [ -z "${INPUT_VERSION}" ]; then
+            ALL_VERSIONS=$(curl -fsSL "https://api.papermc.io/v2/projects/paper" | jq -r '.versions[]')
+            MC_VERSION=$(echo "$ALL_VERSIONS" \
+              | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' | sort -V | tail -1)
+          else
+            MC_VERSION=$(printf '%s' "${INPUT_VERSION}" | tr -cd '0-9.')
+          fi
+
+          if [ -z "${INPUT_BUILD}" ]; then
+            BUILDS_JSON=$(curl -fsSL \
+              "https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds")
+            PAPER_BUILD=$(echo "$BUILDS_JSON" \
+              | jq '[.builds[] | select(.channel == "default")] | last | .build')
+            if [ -z "$PAPER_BUILD" ] || [ "$PAPER_BUILD" = "null" ]; then
+              PAPER_BUILD=$(echo "$BUILDS_JSON" | jq '.builds | last | .build')
+            fi
+          else
+            PAPER_BUILD=$(printf '%s' "${INPUT_BUILD}" | tr -cd '0-9')
+          fi
+
+          JAR_NAME="paper-${MC_VERSION}-${PAPER_BUILD}.jar"
+          DOWNLOAD_URL="https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds/${PAPER_BUILD}/downloads/${JAR_NAME}"
+
+          echo "mc_version=${MC_VERSION}"     >> "$GITHUB_OUTPUT"
+          echo "paper_build=${PAPER_BUILD}"   >> "$GITHUB_OUTPUT"
+          echo "jar_name=${JAR_NAME}"         >> "$GITHUB_OUTPUT"
+          echo "download_url=${DOWNLOAD_URL}" >> "$GITHUB_OUTPUT"
+          echo "cache_key=paper-${MC_VERSION}-${PAPER_BUILD}" >> "$GITHUB_OUTPUT"
+          echo "📋 Paper ${MC_VERSION} build #${PAPER_BUILD}"
+
+      - name: 💾 Cache Paper JAR
+        id: cache_paper
+        uses: actions/cache@v4
+        with:
+          path: paper.jar
+          key: ${{ steps.paper.outputs.cache_key }}
+
+      - name: ⬇️ Download & verify Paper JAR
+        if: steps.cache_paper.outputs.cache-hit != 'true'
+        env:
+          DOWNLOAD_URL: ${{ steps.paper.outputs.download_url }}
+          MC_VERSION:   ${{ steps.paper.outputs.mc_version }}
+          PAPER_BUILD:  ${{ steps.paper.outputs.paper_build }}
+        run: |
+          echo "⬇️ Downloading Paper ${MC_VERSION} build #${PAPER_BUILD}..."
+          curl -fsSL "${DOWNLOAD_URL}" -o paper.jar
+
+          EXPECTED_SHA=$(curl -fsSL \
+            "https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds/${PAPER_BUILD}" \
+            | jq -r ".downloads.application.sha256")
+          ACTUAL_SHA=$(sha256sum paper.jar | cut -d' ' -f1)
+
+          if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+            echo "❌ SHA256 MISMATCH — aborting!"
+            echo "   Expected : ${EXPECTED_SHA}"
+            echo "   Got      : ${ACTUAL_SHA}"
+            exit 1
+          fi
+          echo "✅ SHA256 OK — $(du -sh paper.jar | cut -f1)"
+
+      - name: 📋 Runner info
+        run: |
+          echo "=== Hardware ===" && nproc && free -h && df -h /
+          echo "=== Java ===" && java -version
+
+      - name: ✅ Accept EULA
+        run: echo "eula=true" > eula.txt
+
+      - name: 🚀 Run Paper Server
+        if: "!contains(github.event.head_commit.message, '[no ci]')"
+        continue-on-error: true
+        timeout-minutes: 355
+        env:
+          FINE_GRAINED_PAT: ${{ secrets.FINE_GRAINED_PAT }}
+          REPO:             ${{ github.repository }}
+          MC_VERSION:       ${{ steps.paper.outputs.mc_version }}
+          PAPER_BUILD:      ${{ steps.paper.outputs.paper_build }}
+
+          DISCORD_WEBHOOK:  ${{ secrets.DISCORD_WEBHOOK }}
+
+          TUNNEL_TYPE_INPUT:      ${{ github.event.inputs.tunnel_type }}
+          TUNNEL_TYPE_SECRET:     ${{ secrets.TUNNEL_TYPE }}
+          PLAYIT_SECRET:          ${{ secrets.PLAYIT_SECRET }}
+
+          BACKUP_REPOS:           ${{ secrets.BACKUP_REPOS }}
+          BACKUP_PAT:             ${{ secrets.BACKUP_PAT }}
+
+          SSHX_ENABLED:           ${{ secrets.SSHX_ENABLED }}
+
+        run: |
+          log()  { printf '[%s] ℹ️  %s\n' "$(date '+%H:%M:%S')" "$*"; }
+          ok()   { printf '[%s] ✅ %s\n' "$(date '+%H:%M:%S')" "$*"; }
+          warn() { printf '[%s] ⚠️  %s\n' "$(date '+%H:%M:%S')" "$*"; }
+          err()  { printf '[%s] ❌ %s\n' "$(date '+%H:%M:%S')" "$*"; }
+
+          SQUASH_THRESHOLD=15
+
+          squash_autosave_commits() {
+            (
+              flock -w 30 9 || { warn "squash: git locked after 30s — skipping"; exit 0; }
+
+            local count=0
+            while IFS= read -r subject; do
+              [[ "$subject" == *"[no ci]"* ]] && (( count++ )) || break
+            done < <(git log --format="%s" HEAD 2>/dev/null | head -60)
+
+            if (( count < SQUASH_THRESHOLD )); then
+              log "squash: ${count}/${SQUASH_THRESHOLD} [no ci] commits — not yet"
+              exit 0
+            fi
+
+            log "squash: collapsing ${count} auto-save commits → 1..."
+
+            local base
+            base=$(git log --format="%H %s" HEAD 2>/dev/null \
+                   | awk '!/\[no ci\]/{print $1; exit}')
+
+            if [ -z "$base" ]; then
+              warn "squash: entire history is [no ci] commits — skipping (no safe base)"
+              exit 0
+            fi
+
+            git reset --soft "$base" 2>/dev/null \
+              || { warn "squash: reset --soft failed"; exit 1; }
+
+            git commit \
+              -m "chore: world snapshot [no ci]" \
+              -m "Squashed ${count} auto-saves — Paper ${MC_VERSION} #${PAPER_BUILD} — $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              --no-verify 2>/dev/null \
+              || { warn "squash: commit failed"; git reset --hard HEAD 2>/dev/null; exit 1; }
+
+            git fetch origin main 2>/dev/null || true
+            if git push origin HEAD:main --force 2>/dev/null; then
+              ok "squash: ${count} commits → 1  (unreachable blobs queued for gc)"
+              discord_notify "🗜️ **RinaMC** — Squashed ${count} auto-saves → 1 commit. Repo slimmed." 3447003
+            else
+              warn "squash: push failed — reverting local squash"
+              git fetch origin main 2>/dev/null || true
+              git reset --hard origin/main 2>/dev/null || true
+              exit 1
+            fi
+
+            ) 9>"$BACKUP_LOCK"
+          }
+
+          full_repack() {
+            local before_mb after_mb saved
+            before_mb=$(du -sm .git 2>/dev/null | cut -f1)
+            log "full_repack: .git is ${before_mb} MB — starting..."
+
+            git reflog expire \
+              --expire=now --expire-unreachable=now --all 2>/dev/null || true
+
+            git repack -a -d -f \
+              --depth=50 --window=50 --quiet 2>/dev/null || true
+
+            git prune --expire=now --quiet 2>/dev/null || true
+            git pack-refs --all 2>/dev/null || true
+
+            after_mb=$(du -sm .git 2>/dev/null | cut -f1)
+            saved=$(( before_mb - after_mb ))
+            log "full_repack: ${before_mb} MB → ${after_mb} MB (freed ${saved} MB) — $(df -h / | awk 'NR==2{print $4}') disk free"
+
+            if (( saved > 50 )); then
+              discord_notify "🗜️ **RinaMC** — Git repack freed **${saved} MB** (${before_mb}→${after_mb} MB)." 3447003
+            fi
+          }
+
+          REPO_SIZE_WARN_MB=600
+          REPO_SIZE_CRIT_MB=1200
+
+          check_repo_size() {
+            local size_mb
+            size_mb=$(du -sm .git 2>/dev/null | cut -f1)
+            if (( size_mb >= REPO_SIZE_CRIT_MB )); then
+              err "Repo .git is ${size_mb} MB — CRITICAL, forcing squash+repack now"
+              discord_notify "🚨 **RinaMC** — Repo size critical (${size_mb} MB). Emergency cleanup." 15158332
+              squash_autosave_commits
+              full_repack
+            elif (( size_mb >= REPO_SIZE_WARN_MB )); then
+              warn "Repo .git is ${size_mb} MB — warning threshold"
+              discord_notify "⚠️ **RinaMC** — Repo size warning: ${size_mb} MB." 16776960
+            fi
+          }
+
+          TUNNEL_TYPE="${TUNNEL_TYPE_INPUT:-${TUNNEL_TYPE_SECRET:-playit}}"
+
+          discord_notify() {
+            [ -z "${DISCORD_WEBHOOK}" ] && return 0
+            local msg="$1" color="${2:-3447003}"
+            curl -fsSL -X POST "${DISCORD_WEBHOOK}" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n --arg d "$msg" --argjson c "$color" \
+                    '{embeds:[{description:$d,color:$c}]}')" \
+              > /dev/null 2>&1 || true
+          }
+
+          check_disk_space() {
+            local avail_kb avail_gb
+            avail_kb=$(df --output=avail / | tail -1)
+            avail_gb=$(( avail_kb / 1024 / 1024 ))
+            if (( avail_kb < 2097152 )); then
+              err "CRITICAL: Only ${avail_gb} GB disk remaining — emergency rotation!"
+              discord_notify "🚨 **RinaMC** — Disk critically low (${avail_gb} GB). Emergency rotation." 15158332
+              return 2
+            elif (( avail_kb < 4194304 )); then
+              warn "Disk low: ${avail_gb} GB remaining"
+              discord_notify "⚠️ **RinaMC** — Disk warning: ${avail_gb} GB left." 16776960
+            fi
+            return 0
+          }
+
+          LAST_LOG_SIZE=0
+          LAST_LOG_CHANGE=0
+          HEALTH_TIMEOUT=900
+          DDOS_LAG_COUNT=0
+          DDOS_LAG_MAX=5
+          DDOS_LAST_FLOOD_WARN=0
+          DDOS_FLOOD_COOLDOWN=300
+          DDOS_CONN_THRESHOLD=15
+
+          health_check_paper() {
+            [ ! -f logs/latest.log ] && return 0
+            local cur_size now stale
+            cur_size=$(stat -c%s logs/latest.log 2>/dev/null || echo 0)
+            now=$(date +%s)
+            if (( cur_size != LAST_LOG_SIZE )); then
+              LAST_LOG_SIZE=$cur_size
+              LAST_LOG_CHANGE=$now
+              return 0
+            fi
+            if (( LAST_LOG_CHANGE > 0 )); then
+              stale=$(( now - LAST_LOG_CHANGE ))
+              if (( stale >= HEALTH_TIMEOUT )); then
+                warn "Paper log silent for ${stale}s — probing with /list before kill..."
+                local _probe_before
+                _probe_before=$(wc -l < logs/latest.log 2>/dev/null || echo 0)
+                mc_cmd "list"
+                local _probe_wait=0
+                while (( _probe_wait < 8 )); do
+                  sleep 1; (( _probe_wait++ )) || true
+                  if tail -n +"$(( _probe_before + 1 ))" logs/latest.log 2>/dev/null \
+                       | grep -qi "There are.*player\|players online\|\\[Server\\]"; then
+                    ok "health_check: /list responded in ${_probe_wait}s — server is alive (was just idle)"
+                    LAST_LOG_SIZE=$(stat -c%s logs/latest.log 2>/dev/null || echo 0)
+                    LAST_LOG_CHANGE=$(date +%s)
+                    return 0
+                  fi
+                done
+                warn "Paper silent ${stale}s + no /list response → JVM hung. Force-killing..."
+                discord_notify "⚠️ **RinaMC** — Unresponsive for ${stale}s (no /list reply). Force-restarting." 16776960
+                kill -SIGKILL "${SERVER_PID}" 2>/dev/null || true
+                LAST_LOG_CHANGE=$(date +%s)
+              fi
+            fi
+          }
+
+
+          configure_server_ddos_protection() {
+            local sprop="server.properties"
+            if [ -f "$sprop" ]; then
+              if grep -q "^connection-throttle=" "$sprop" 2>/dev/null; then
+                sed -i 's/^connection-throttle=.*/connection-throttle=8000/' "$sprop"
+              else
+                echo "connection-throttle=8000" >> "$sprop"
+              fi
+              log "ddos: connection-throttle=8000ms configured"
+            fi
+            local pglobal="paper-global.yml"
+            if [ -f "$pglobal" ]; then
+              if ! grep -qE "^\s*max-joins-per-tick:" "$pglobal" 2>/dev/null; then
+                sed -i '/^misc:/a\  max-joins-per-tick: 3' "$pglobal" 2>/dev/null || true
+                log "ddos: max-joins-per-tick=3 injected into paper-global.yml"
+              fi
+            fi
+          }
+
+          ddos_watchdog() {
+            [ ! -f logs/latest.log ] && return 0
+            local now; now=$(date +%s)
+            local lag_count
+            lag_count=$(tail -n 100 logs/latest.log 2>/dev/null \
+              | grep -c "Can't keep up\|Running.*behind, skipping" 2>/dev/null || echo 0)
+            if (( lag_count >= 3 )); then
+              (( DDOS_LAG_COUNT++ )) || true
+              warn "ddos_watchdog: server overload (${lag_count} lag events, streak ${DDOS_LAG_COUNT}/${DDOS_LAG_MAX})"
+              if (( DDOS_LAG_COUNT >= DDOS_LAG_MAX )); then
+                err "ddos_watchdog: persistent overload — rotating (possible DDoS/flood)"
+                discord_notify "🛡️ **RinaMC** — Persistent overload (possible DDoS, ${DDOS_LAG_COUNT}x streak). Rotating." 15158332
+                graceful_stop
+                rotation_commit_and_push || commit_and_push || true
+                trigger_rotation; exit 0
+              fi
+              discord_notify "🛡️ **RinaMC** — Overload detected: ${lag_count} lag events (streak ${DDOS_LAG_COUNT}/${DDOS_LAG_MAX})." 16776960
+            else
+              (( DDOS_LAG_COUNT > 0 )) && (( DDOS_LAG_COUNT-- )) || true
+            fi
+            if (( now - DDOS_LAST_FLOOD_WARN >= DDOS_FLOOD_COOLDOWN )); then
+              local conn_count
+              conn_count=$(tail -n 50 logs/latest.log 2>/dev/null \
+                | grep -c "IP REDACTED" 2>/dev/null || echo 0)
+              if (( conn_count >= DDOS_CONN_THRESHOLD )); then
+                DDOS_LAST_FLOOD_WARN=$now
+                warn "ddos_watchdog: connection flood — ${conn_count} IPs in last 50 log lines"
+                discord_notify "🛡️ **RinaMC** — Connection flood: ${conn_count} connections in last 50 lines. Kicking all players." 15158332
+                mc_cmd "kick @a Maintenance: connection flood protection active"
+              fi
+            fi
+          }
+
+          was_intentional_stop() {
+            tail -40 logs/latest.log 2>/dev/null \
+              | grep -qi "stopping the server\|stopping server\|closing server" \
+              && return 0 || return 1
+          }
+
+          CRASH_COUNT=0
+          CRASH_WINDOW_START=0
+          MAX_CRASHES=3
+          CRASH_WINDOW=600
+
+          record_crash() {
+            local now; now=$(date +%s)
+            if (( now - CRASH_WINDOW_START > CRASH_WINDOW )); then
+              CRASH_COUNT=1
+              CRASH_WINDOW_START=$now
+            else
+              (( CRASH_COUNT++ )) || true
+            fi
+          }
+
+          CRASH_TYPE=""
+          CRASH_PLUGIN=""
+          CRASH_DETAIL=""
+          CRASH_DELAY=10
+
+          analyze_crash() {
+            CRASH_TYPE="unknown"
+            CRASH_PLUGIN=""
+            CRASH_DETAIL=""
+            CRASH_DELAY=10
+
+            [ ! -f logs/latest.log ] && return 0
+
+            local tail_log
+            tail_log=$(tail -150 logs/latest.log 2>/dev/null || echo "")
+
+            if echo "$tail_log" | grep -qiE "OutOfMemoryError|Cannot allocate memory|GC overhead limit exceeded"; then
+              CRASH_TYPE="OOM"
+              CRASH_DELAY=30
+              CRASH_DETAIL=$(echo "$tail_log" \
+                | grep -iE "OutOfMemoryError|Cannot allocate|GC overhead" \
+                | tail -1 | cut -c1-120)
+              local mem_avail; mem_avail=$(awk '/^MemAvailable/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || echo "?")
+              warn "analyze_crash: OOM detected — ${mem_avail} MB RAM available, restart delay ${CRASH_DELAY}s"
+
+            elif echo "$tail_log" | grep -qiE "Watchdog|server has stopped responding|Thread .* appears to be hung|deadlock"; then
+              CRASH_TYPE="watchdog"
+              CRASH_DELAY=20
+              CRASH_DETAIL=$(echo "$tail_log" \
+                | grep -iE "Watchdog|stopped responding|appears to be hung|deadlock" \
+                | tail -1 | cut -c1-120)
+              warn "analyze_crash: Watchdog/deadlock — JVM thread frozen"
+
+            elif echo "$tail_log" | grep -qiE "Exception in thread|Caused by:|Unhandled exception"; then
+              CRASH_TYPE="plugin_exception"
+              CRASH_DELAY=10
+
+              CRASH_PLUGIN=$(echo "$tail_log" \
+                | grep -iE "Error occurred in plugin|occurred in plugin" \
+                | grep -oP "(?<=plugin ')([^']+)" | head -1 || echo "")
+
+              if [ -z "$CRASH_PLUGIN" ]; then
+                CRASH_PLUGIN=$(echo "$tail_log" \
+                  | grep -oiP "(?:at |caused by: )[\w.]+\.(?P<pkg>[\w]+)\." \
+                  | grep -oiE "\b(Essentials|LuckPerms|Vault|WorldGuard|WorldEdit|PlaceholderAPI|EssentialsX|CMI|Geyser|Floodgate|ViaVersion|ViaBackwards|ProtocolLib|Citizens|MythicMobs|DecentHolograms|spark)\b" \
+                  | head -1 || echo "")
+              fi
+
+              CRASH_DETAIL=$(echo "$tail_log" \
+                | grep -iE "Exception in thread|Caused by:|Unhandled exception" \
+                | tail -2 | tr '\n' ' ' | cut -c1-150)
+              warn "analyze_crash: Exception crash${CRASH_PLUGIN:+ — plugin suspect: ${CRASH_PLUGIN}}"
+
+            elif echo "$tail_log" | grep -qiE "SIGSEGV|JVM crash|A fatal error has been detected|hs_err_pid"; then
+              CRASH_TYPE="jvm_native"
+              CRASH_DELAY=20
+              CRASH_DETAIL="JVM native crash (SIGSEGV / fatal error)"
+              warn "analyze_crash: JVM native crash detected"
+            fi
+
+            local hs_err
+            hs_err=$(ls hs_err_pid*.log 2>/dev/null | head -1 || echo "")
+            if [ -n "$hs_err" ]; then
+              warn "analyze_crash: JVM crash dump found: ${hs_err}"
+              CRASH_TYPE="${CRASH_TYPE:-jvm_native}"
+              local _hs_dest="/tmp/crash_dump_$(date +%s).log"
+              cp "$hs_err" "$_hs_dest" 2>/dev/null && \
+                warn "analyze_crash: crash dump archived to ${_hs_dest}"
+              grep -qxF "hs_err_pid*.log" .gitignore 2>/dev/null || \
+                echo "hs_err_pid*.log" >> .gitignore
+            fi
+
+            ok "analyze_crash: type=${CRASH_TYPE} | delay=${CRASH_DELAY}s | plugin=${CRASH_PLUGIN:-none}"
+          }
+
+          pre_restart_validation() {
+            local _issues=0 _block=false
+
+            log "pre_restart_validation: checking system state after crash..."
+
+            local _avail_kb; _avail_kb=$(df --output=avail / | tail -1 2>/dev/null || echo 999999999)
+            local _avail_gb=$(( _avail_kb / 1024 / 1024 ))
+            if (( _avail_kb < 1048576 )); then
+              err "pre_restart: disk critically low (${_avail_gb} GB) — Paper cannot write world → BLOCK restart"
+              _block=true; (( _issues++ )) || true
+            elif (( _avail_kb < 2097152 )); then
+              warn "pre_restart: disk low (${_avail_gb} GB) — restart risky but allowed"
+              (( _issues++ )) || true
+            else
+              ok "pre_restart: disk OK (${_avail_gb} GB free)"
+            fi
+
+            local _mem_kb; _mem_kb=$(awk '/^MemAvailable/{print $2}' /proc/meminfo 2>/dev/null || echo 999999999)
+            local _mem_mb=$(( _mem_kb / 1024 ))
+            if (( _mem_kb < 524288 )); then
+              err "pre_restart: only ${_mem_mb} MB RAM free — OOM likely to repeat → BLOCK restart"
+              _block=true; (( _issues++ )) || true
+            elif (( _mem_kb < 1048576 )); then
+              warn "pre_restart: low RAM (${_mem_mb} MB free) — may OOM again"
+              (( _issues++ )) || true
+            else
+              ok "pre_restart: RAM OK (${_mem_mb} MB free)"
+            fi
+
+            if [ ! -f paper.jar ]; then
+              err "pre_restart: paper.jar MISSING → BLOCK restart"
+              _block=true; (( _issues++ )) || true
+            else
+              local _jar_sz; _jar_sz=$(stat -c%s paper.jar 2>/dev/null || echo 0)
+              if (( _jar_sz < 1000000 )); then
+                err "pre_restart: paper.jar suspiciously small (${_jar_sz}B) → BLOCK restart"
+                _block=true; (( _issues++ )) || true
+              else
+                ok "pre_restart: paper.jar OK ($(du -sh paper.jar | cut -f1))"
+              fi
+            fi
+
+            local _wcount; _wcount=$(find . -maxdepth 1 -type d -name "world*" 2>/dev/null | wc -l)
+            if (( _wcount == 0 )); then
+              warn "pre_restart: no world directories — server will generate a new world on restart"
+              (( _issues++ )) || true
+            else
+              ok "pre_restart: ${_wcount} world dir(s) found"
+            fi
+
+            mkdir -p world/playerdata world/stats world/advancements
+            ok "pre_restart: playerdata dirs OK (auto-repaired if missing)"
+
+            local _corrupt_mca=0
+            while IFS= read -r _mca; do
+              local _msz; _msz=$(stat -c%s "$_mca" 2>/dev/null || echo 0)
+              if (( _msz > 0 && _msz < 4096 )); then
+                warn "pre_restart: suspect region file: ${_mca} (${_msz}B — may be corrupt)"
+                (( _corrupt_mca++ )) || true
+              fi
+            done < <(find . -name "*.mca" -not -path "./.git/*" 2>/dev/null | shuf | head -30)
+            if (( _corrupt_mca > 0 )); then
+              warn "pre_restart: ${_corrupt_mca} suspect .mca file(s) — chunk errors possible after restart"
+              discord_notify "⚠️ **RinaMC** — ${_corrupt_mca} suspect region file(s) after crash. Chunk corruption possible — check world integrity." 16776960
+              (( _issues++ )) || true
+            else
+              ok "pre_restart: region file scan clean"
+            fi
+
+            if $_block; then
+              err "pre_restart_validation: ❌ FAIL (${_issues} critical issue(s)) — rotate recommended"
+              return 1
+            elif (( _issues > 0 )); then
+              warn "pre_restart_validation: ⚠️ ${_issues} warning(s) — proceeding cautiously"
+              return 0
+            else
+              ok "pre_restart_validation: ✅ all checks passed"
+              return 0
+            fi
+          }
+
+          config_health_check() {
+            log "Config health check..."
+            local issues=0
+
+            local err_pattern="could not load.*\.yml|failed to load.*config|error loading|invalid.*config|exception.*config"
+            if grep -qiE "$err_pattern" logs/latest.log 2>/dev/null; then
+              warn "Config load errors detected in server log:"
+              grep -iE "$err_pattern" logs/latest.log 2>/dev/null \
+                | head -8 | while IFS= read -r line; do warn "  >> $line"; done
+              (( issues++ )) || true
+              discord_notify "⚠️ **RinaMC** — Config load errors on startup. Check workflow logs." 16776960
+            fi
+
+            local required=("server.properties" "bukkit.yml" "spigot.yml")
+            for cfg in "${required[@]}"; do
+              if [ ! -f "$cfg" ]; then
+                warn "Expected config missing after startup: $cfg"
+                (( issues++ )) || true
+              fi
+            done
+
+            local world_count
+            world_count=$(find . -maxdepth 1 -type d -name "world*" 2>/dev/null | wc -l)
+            if (( world_count == 0 )); then
+              warn "No world directories found — fresh install or world was lost?"
+            fi
+
+            if [ ! -d "world/playerdata" ]; then
+              warn "world/playerdata/ MISSING — creating now (player data was at risk!)"
+              mkdir -p world/playerdata world/stats world/advancements
+              touch world/playerdata/.gitkeep
+              (( issues++ )) || true
+              discord_notify "⚠️ **RinaMC** — world/playerdata/ was missing! Auto-repaired. Check if players lost data." 16776960
+            else
+              ok "world/playerdata/ present ✓"
+            fi
+
+            if (( issues == 0 )); then
+              ok "Config health check passed (${world_count} world dir(s) present)"
+            else
+              warn "Config health: ${issues} issue(s). Server may behave unexpectedly."
+            fi
+          }
+
+          JVM_FLAGS=(
+            -Xms8G -Xmx8G
+            -XX:+UseG1GC
+            -XX:+ParallelRefProcEnabled
+            -XX:MaxGCPauseMillis=200
+            -XX:+UnlockExperimentalVMOptions
+            -XX:+DisableExplicitGC
+            -XX:+AlwaysPreTouch
+            -XX:G1NewSizePercent=30
+            -XX:G1MaxNewSizePercent=40
+            -XX:G1HeapRegionSize=8M
+            -XX:G1ReservePercent=20
+            -XX:G1HeapWastePercent=5
+            -XX:G1MixedGCCountTarget=4
+            -XX:InitiatingHeapOccupancyPercent=15
+            -XX:G1MixedGCLiveThresholdPercent=90
+            -XX:G1RSetUpdatingPauseTimePercent=5
+            -XX:SurvivorRatio=32
+            -XX:+PerfDisableSharedMem
+            -XX:MaxTenuringThreshold=1
+            -XX:+OptimizeStringConcat
+            -XX:+UseStringDeduplication
+            -Dfile.encoding=UTF-8
+            -Dusing.aikars.flags=https://mcflags.emc.gs
+            -Daikars.new.flags=true
+            -XX:+ExitOnOutOfMemoryError
+          )
+
+          SERVER_PID=""
+          TUNNEL_PID=""
+          MC_STDIN_FD=""
+          STDIN_PIPE=/tmp/mc_stdin
+          BACKUP_LOCK=/tmp/backup.lock
+          BACKUP_STATUS_FILE=/tmp/last_backup_ok
+          BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-7}"
+          SSHX_PID=""
+
+          setup_git() {
+            git config --local user.email "github-actions[bot]@users.noreply.github.com"
+            git config --local user.name  "github-actions[bot]"
+            git remote set-url origin \
+              "https://x-access-token:${FINE_GRAINED_PAT}@github.com/${GITHUB_REPOSITORY}.git"
+            ok "Git remote configured"
+          }
+
+          push_with_verification() {
+            local _local_sha
+            _local_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+            if [ -z "$_local_sha" ]; then
+              warn "push_with_verification: cannot resolve local HEAD SHA — aborting"
+              return 1
+            fi
+
+            local _attempt _backoff=3
+            for _attempt in 1 2 3 4 5; do
+              log "push_with_verification: attempt ${_attempt}/5 (SHA ${_local_sha:0:8})..."
+
+              if git push origin HEAD:main --force 2>/dev/null; then
+                local _poll_delays=(1 2 3 5 8 13)
+                local _remote_sha=""
+                for _d in "${_poll_delays[@]}"; do
+                  sleep "$_d"
+                  _remote_sha=$(git ls-remote origin refs/heads/main 2>/dev/null | cut -f1 || echo "")
+                  if [ "$_local_sha" = "$_remote_sha" ]; then
+                    ok "push_with_verification: ✅ SHA verified (${_local_sha:0:8}) on attempt ${_attempt} (delay ${_d}s)"
+                    date +%s > "${BACKUP_STATUS_FILE}"
+                    return 0
+                  fi
+                  warn "push_with_verification: propagation wait ${_d}s — local=${_local_sha:0:8} remote=${_remote_sha:0:8}"
+                done
+                warn "push_with_verification: push OK but SHA unverified after propagation — retry push"
+
+              else
+                warn "push_with_verification: push FAILED on attempt ${_attempt}/5"
+
+                git fetch origin main 2>/dev/null || true
+                git reset --hard origin/main 2>/dev/null || true
+                mkdir -p world/playerdata world/stats world/advancements
+
+                git add -A 2>/dev/null || true
+                git reset -- \
+                  logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
+                  "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
+                  playit STOP_SERVER 2>/dev/null || true
+
+                if ! git diff --cached --quiet 2>/dev/null; then
+                  local _re_ts; _re_ts=$(date -u '+%Y-%m-%d %H:%M UTC')
+                  git commit \
+                    -m "chore: auto-save retry-${_attempt} [no ci]" \
+                    -m "Paper ${MC_VERSION} build #${PAPER_BUILD} — ${_re_ts}" \
+                    --no-verify 2>/dev/null || true
+                  _local_sha=$(git rev-parse HEAD 2>/dev/null || echo "$_local_sha")
+                fi
+              fi
+
+              if (( _attempt < 5 )); then
+                log "push_with_verification: backing off ${_backoff}s before retry..."
+                sleep "$_backoff"
+                _backoff=$(( _backoff * 2 < 60 ? _backoff * 2 : 60 ))
+              fi
+            done
+
+            err "push_with_verification: FAILED after 5 attempts (last local SHA: ${_local_sha:0:8})"
+            return 1
+          }
+
+          mc_cmd() {
+            if [ -n "${MC_STDIN_FD}" ] && kill -0 "${SERVER_PID}" 2>/dev/null; then
+              printf '%s\n' "$1" >&"${MC_STDIN_FD}"
+            fi
+          }
+
+          graceful_stop() {
+            log "Graceful stop: save-all flush..."
+            mkdir -p world/playerdata world/stats world/advancements
+            mc_cmd "save-all flush"
+            sleep 4
+            log "Graceful stop: sending /stop..."
+            mc_cmd "stop"
+            exec {MC_STDIN_FD}>&- 2>/dev/null || true
+
+            local timeout=45 elapsed=0
+            while kill -0 "${SERVER_PID}" 2>/dev/null; do
+              sleep 1; (( elapsed++ )) || true
+              if (( elapsed >= timeout )); then
+                warn "Paper still alive after ${timeout}s — SIGTERM..."
+                kill -SIGTERM "${SERVER_PID}" 2>/dev/null || true
+                sleep 5
+                kill -0 "${SERVER_PID}" 2>/dev/null \
+                  && kill -SIGKILL "${SERVER_PID}" 2>/dev/null || true
+                break
+              fi
+            done
+            ok "Paper stopped (${elapsed}s)"
+
+            kill "${SSHX_PID:-}" 2>/dev/null || true
+            tmux kill-session -t mc 2>/dev/null || true
+          }
+
+          start_paper() {
+            log "Starting Paper ${MC_VERSION} build #${PAPER_BUILD}..."
+            mkdir -p logs
+
+            if git pull --ff-only origin main 2>/dev/null; then
+              log "Config sync: fast-forward OK"
+            elif git fetch origin main 2>/dev/null \
+                 && git reset --hard origin/main 2>/dev/null; then
+              log "Config sync: hard-reset to origin/main (post-squash recovery)"
+            else
+              warn "Config sync: skipped (network error — starting with on-disk state)"
+            fi
+
+            mkdir -p world/playerdata world/stats world/advancements
+            log "Player-data dirs verified: world/{playerdata,stats,advancements}"
+
+            rm -f "$STDIN_PIPE"
+            mkfifo "$STDIN_PIPE"
+
+            java "${JVM_FLAGS[@]}" \
+              -jar paper.jar \
+              --nogui \
+              < "$STDIN_PIPE" \
+              > >(sed \
+                    -e '/login:/s/.*/<LOGIN REDACTED>/' \
+                    -e 's|/[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}:[0-9]\+|/<IP REDACTED>|g' \
+                  | stdbuf -oL tee -a logs/latest.log) \
+              2>&1 &
+            SERVER_PID=$!
+
+            exec {MC_STDIN_FD}>"$STDIN_PIPE"
+
+            log "Paper PID: ${SERVER_PID}"
+
+            local log_offset=0
+            if [ -f logs/latest.log ]; then
+              log_offset=$(wc -l < logs/latest.log 2>/dev/null || echo 0)
+            fi
+
+            local timeout=180 elapsed=0
+            while ! tail -n +"$((log_offset + 1))" logs/latest.log 2>/dev/null | grep -q "Done ("; do
+              if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+                err "Paper died during startup!"
+                return 1
+              fi
+              if (( elapsed >= timeout )); then
+                warn "Startup timeout (${timeout}s) — continuing anyway"
+                break
+              fi
+              sleep 5; (( elapsed += 5 )) || true
+            done
+            ok "Paper ready (startup: ${elapsed}s)"
+
+            config_health_check
+            configure_server_ddos_protection
+          }
+
+          setup_tunnel() {
+            log "Tunnel mode: ${TUNNEL_TYPE}"
+            case "$TUNNEL_TYPE" in
+
+              playit)
+
+                if [ -z "${PLAYIT_SECRET}" ]; then
+                  warn "PLAYIT_SECRET is not set — cannot start playit tunnel"
+                  warn "To fix: repo Settings → Secrets → add PLAYIT_SECRET"
+                  warn "Falling back to tunnel: none (server localhost-only)"
+                  discord_notify "⚠️ **RinaMC** — PLAYIT_SECRET not set. Server running without tunnel. Add secret to fix." 16776960
+                  TUNNEL_TYPE=none
+                else
+                  PLAYIT_VER="0.15.26"
+                  PLAYIT_SHA256="db7f02937fbfd8a6b3bf74d3dea730825e24196c6b7dcc028aa410d9ead9865d"
+                  log "Downloading playit-gg agent v${PLAYIT_VER}..."
+                  curl -fsSL \
+                    "https://github.com/playit-cloud/playit-agent/releases/download/v${PLAYIT_VER}/playit-linux-amd64" \
+                    -o playit
+                  ACTUAL_SHA=$(sha256sum playit | cut -d' ' -f1)
+                  if [ "$ACTUAL_SHA" != "$PLAYIT_SHA256" ]; then
+                    err "playit SHA256 MISMATCH — aborting (got: ${ACTUAL_SHA})"
+                    exit 1
+                  fi
+                  chmod +x playit
+                  mkdir -p /tmp/playit-cfg
+                  printf 'secret_key = "%s"\n' "${PLAYIT_SECRET}" > /tmp/playit-cfg/config.toml
+                  chmod 600 /tmp/playit-cfg/config.toml
+                  ok "playit-gg v${PLAYIT_VER} downloaded and verified"
+                fi
+                ;;
+
+              none)
+                log "No tunnel — server will only be accessible on localhost."
+                log "Note: you can still use in-server proxy plugins (BungeeCord,"
+                log "ViaProxy, TCPShield) to expose the server via your own means."
+                ;;
+
+              *)
+                warn "Unknown TUNNEL_TYPE '${TUNNEL_TYPE}' — falling back to none"
+                TUNNEL_TYPE=none
+                ;;
+            esac
+          }
+
+          start_tunnel() {
+            case "$TUNNEL_TYPE" in
+
+              playit)
+                log "Starting playit-gg agent..."
+                PLAYIT_CONFIG=/tmp/playit-cfg/config.toml ./playit >> logs/playit.log 2>&1 &
+                TUNNEL_PID=$!
+                sleep 6
+                kill -0 "${TUNNEL_PID}" 2>/dev/null \
+                  && ok "playit PID: ${TUNNEL_PID} — check playit dashboard for address" \
+                  || err "playit failed to start — check PLAYIT_SECRET"
+                discord_notify "🎮 **RinaMC** — Online via playit.gg (check dashboard for address)." 3066993
+                ;;
+
+              none)
+                log "No tunnel started."
+                TUNNEL_PID=0
+                ;;
+            esac
+          }
+
+          TUNNEL_FAIL_COUNT=0
+          TUNNEL_LAST_FAIL=0
+          TUNNEL_BACKOFF=10
+          TUNNEL_ALIVE_SINCE=0
+          TUNNEL_STABLE_SEC=30
+
+          restart_tunnel_if_dead() {
+            [ "$TUNNEL_TYPE" = "none" ] && return 0
+            [ "${TUNNEL_PID:-0}" = "0" ] && return 0
+
+            local now; now=$(date +%s)
+
+            if ! kill -0 "${TUNNEL_PID}" 2>/dev/null; then
+              TUNNEL_ALIVE_SINCE=0
+
+              local wait_sec=$(( TUNNEL_BACKOFF * (1 << (TUNNEL_FAIL_COUNT < 4 ? TUNNEL_FAIL_COUNT : 4)) ))
+              (( wait_sec > 120 )) && wait_sec=120
+
+              if (( TUNNEL_LAST_FAIL > 0 && now - TUNNEL_LAST_FAIL < wait_sec )); then
+                return 0
+              fi
+
+              (( TUNNEL_FAIL_COUNT++ )) || true
+              TUNNEL_LAST_FAIL=$now
+
+              if (( TUNNEL_FAIL_COUNT <= 3 )); then
+                warn "Tunnel (${TUNNEL_TYPE}) died — restarting (attempt ${TUNNEL_FAIL_COUNT}, next backoff ${wait_sec}s)..."
+              elif (( TUNNEL_FAIL_COUNT == 4 )); then
+                err "Tunnel (${TUNNEL_TYPE}) keeps failing — suppressing restart logs. Check secrets."
+                discord_notify "⚠️ **RinaMC** — Tunnel (${TUNNEL_TYPE}) unstable after ${TUNNEL_FAIL_COUNT} attempts. Check secrets." 16776960
+              fi
+
+              start_tunnel
+
+            else
+              if (( TUNNEL_ALIVE_SINCE == 0 )); then
+                TUNNEL_ALIVE_SINCE=$now
+              elif (( now - TUNNEL_ALIVE_SINCE >= TUNNEL_STABLE_SEC )); then
+                if (( TUNNEL_FAIL_COUNT > 0 )); then
+                  log "Tunnel (${TUNNEL_TYPE}) stable for ${TUNNEL_STABLE_SEC}s — resetting failure count."
+                fi
+                TUNNEL_FAIL_COUNT=0
+                TUNNEL_LAST_FAIL=0
+              fi
+            fi
+          }
+
+          commit_and_push() {
+            (
+              flock -n 9 || { warn "Backup already running — skipping this cycle"; exit 0; }
+
+              mc_cmd "save-all flush"
+
+              local _log_before=0 _save_confirmed=false _wait_save=0
+              [ -f logs/latest.log ] && _log_before=$(wc -l < logs/latest.log 2>/dev/null || echo 0)
+              sleep 1
+              while (( _wait_save < 9 )); do
+                if [ -f logs/latest.log ] && \
+                   tail -n +"$(( _log_before + 1 ))" logs/latest.log 2>/dev/null \
+                     | grep -qi "Saved the game\|saved the world\|save complete"; then
+                  _save_confirmed=true; break
+                fi
+                sleep 1; (( _wait_save++ )) || true
+              done
+              $_save_confirmed \
+                && log "commit_and_push: save confirmed in ${_wait_save}s" \
+                || warn "commit_and_push: save not confirmed after 10s — proceeding"
+
+              mkdir -p world/playerdata world/stats world/advancements
+
+              local _corrupt_dat=0
+              while IFS= read -r _dat; do
+                local _sz; _sz=$(stat -c%s "$_dat" 2>/dev/null || echo 0)
+                if (( _sz < 10 )); then
+                  warn "CORRUPT player data: ${_dat} (${_sz} bytes) — excluded"
+                  git reset -- "$_dat" 2>/dev/null || true
+                  (( _corrupt_dat++ )) || true
+                fi
+              done < <(find world/playerdata -name "*.dat" -not -name ".gitkeep" 2>/dev/null)
+              (( _corrupt_dat > 0 )) && discord_notify "🚨 **RinaMC** — ${_corrupt_dat} corrupt .dat excluded from backup!" 15158332
+
+              git add -A
+              git reset -- \
+                logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
+                "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
+                playit STOP_SERVER
+
+              git diff --cached --quiet && exit 0
+
+              local COMMIT_TS; COMMIT_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+              local _stash_ok=false _tmp_fallback=""
+              if git stash push --include-untracked -m "cap_staging" 2>/dev/null; then
+                _stash_ok=true
+              else
+                warn "commit_and_push: stash failed — using /tmp fallback for world dirs"
+                _tmp_fallback="/tmp/world-fallback-$$"
+                mkdir -p "$_tmp_fallback"
+                find . -maxdepth 1 -type d \( -name "world" -o -name "world_*" -o -name "*_world" \) \
+                  ! -name ".*" | while IFS= read -r _wd; do
+                    cp -a "$_wd" "$_tmp_fallback/" 2>/dev/null || true
+                  done
+              fi
+
+              git fetch origin main 2>/dev/null || true
+              git reset --hard origin/main 2>/dev/null || true
+              mkdir -p world/playerdata world/stats world/advancements
+
+              if $_stash_ok; then
+                if ! git stash pop 2>/dev/null; then
+                  warn "commit_and_push: stash pop conflict — keeping world (stash) version"
+                  git diff --name-only --diff-filter=U 2>/dev/null \
+                    | xargs -r git checkout --theirs -- 2>/dev/null || true
+                fi
+              elif [ -n "$_tmp_fallback" ] && [ -d "$_tmp_fallback" ]; then
+                cp -a "$_tmp_fallback"/. . 2>/dev/null || true
+                rm -rf "$_tmp_fallback"
+              fi
+
+              mkdir -p world/playerdata world/stats world/advancements
+              git add -A 2>/dev/null || true
+              git reset -- \
+                logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
+                "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
+                playit STOP_SERVER 2>/dev/null || true
+
+              git diff --cached --quiet && exit 0
+
+              local _pd_count
+              _pd_count=$(git diff --cached --name-only 2>/dev/null | grep -c "world/playerdata/" || echo 0)
+              (( _pd_count > 0 )) && log "commit_and_push: staging ${_pd_count} playerdata file(s)"
+
+              git commit \
+                -m "chore: auto-save [no ci]" \
+                -m "Paper ${MC_VERSION} build #${PAPER_BUILD} — ${COMMIT_TS}" \
+                --no-verify || exit 1
+
+              if push_with_verification; then
+                exit 0
+              fi
+
+              err "commit_and_push: push_with_verification failed — creating local snapshot"
+              discord_notify "🚨 **RinaMC** — Git push failed 5× (verified)! Local snapshot saved. Check PAT / network." 15158332
+              local_snapshot || true
+              exit 1
+
+            ) 9>"$BACKUP_LOCK"
+          }
+
+          rotation_commit_and_push() {
+            log "=== ROTATION PUSH START ==="
+            (
+              flock -w 60 9 || { warn "rotation_push: cannot acquire lock after 60s"; exit 1; }
+
+              mkdir -p world/playerdata world/stats world/advancements
+
+              git add -A 2>/dev/null || true
+              git reset -- \
+                logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
+                "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
+                playit STOP_SERVER 2>/dev/null || true
+
+              local _rot_corrupt=0
+              while IFS= read -r _d; do
+                local _dsz; _dsz=$(stat -c%s "$_d" 2>/dev/null || echo 0)
+                if (( _dsz < 10 )); then
+                  warn "rotation_push: corrupt .dat excluded: ${_d} (${_dsz}B)"
+                  git reset -- "$_d" 2>/dev/null || true
+                  (( _rot_corrupt++ )) || true
+                fi
+              done < <(find world/playerdata -name "*.dat" -not -name ".gitkeep" 2>/dev/null)
+              (( _rot_corrupt > 0 )) && \
+                discord_notify "⚠️ **RinaMC** — Rotation: ${_rot_corrupt} corrupt .dat excluded from final push." 16776960
+
+              local _rot_stash_ok=false _rot_tmp=""
+              if git stash push --include-untracked -m "rotation_final_staging" 2>/dev/null; then
+                _rot_stash_ok=true
+              else
+                warn "rotation_push: stash failed — /tmp fallback"
+                _rot_tmp="/tmp/rot-world-$$"
+                mkdir -p "$_rot_tmp"
+                find . -maxdepth 1 -type d \( -name "world" -o -name "world_*" -o -name "*_world" \) \
+                  ! -name ".*" | while IFS= read -r _wd; do
+                    cp -a "$_wd" "$_rot_tmp/" 2>/dev/null || true
+                  done
+              fi
+
+              git fetch origin main 2>/dev/null || true
+              git reset --hard origin/main 2>/dev/null || true
+              mkdir -p world/playerdata world/stats world/advancements
+
+              if $_rot_stash_ok; then
+                if ! git stash pop 2>/dev/null; then
+                  warn "rotation_push: stash pop conflict — keeping world version"
+                  git diff --name-only --diff-filter=U 2>/dev/null \
+                    | xargs -r git checkout --theirs -- 2>/dev/null || true
+                fi
+              elif [ -n "$_rot_tmp" ] && [ -d "$_rot_tmp" ]; then
+                cp -a "$_rot_tmp"/. . 2>/dev/null || true
+                rm -rf "$_rot_tmp"
+              fi
+
+              mkdir -p world/playerdata world/stats world/advancements
+              git add -A 2>/dev/null || true
+              git reset -- \
+                logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
+                "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
+                playit STOP_SERVER 2>/dev/null || true
+
+              if git diff --cached --quiet; then
+                log "rotation_push: no staged changes vs origin — verifying remote SHA..."
+                local _cur_sha _rem_sha
+                _cur_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+                _rem_sha=$(git ls-remote origin refs/heads/main 2>/dev/null | cut -f1 || echo "")
+                if [ "$_cur_sha" = "$_rem_sha" ] && [ -n "$_cur_sha" ]; then
+                  ok "rotation_push: origin already up-to-date (SHA ${_cur_sha:0:8}) ✅"
+                  date +%s > "${BACKUP_STATUS_FILE}"
+                  exit 0
+                fi
+                warn "rotation_push: no staged changes but SHA mismatch — forcing re-push"
+                git commit --allow-empty \
+                  -m "chore: rotation sync [no ci]" \
+                  -m "Force ref update — Paper ${MC_VERSION} #${PAPER_BUILD}" \
+                  --no-verify 2>/dev/null || true
+              else
+                local COMMIT_TS; COMMIT_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
+                local _pd_final
+                _pd_final=$(git diff --cached --name-only 2>/dev/null | grep -c "world/playerdata/" || echo 0)
+                log "rotation_push: committing final state (${_pd_final} playerdata files)..."
+                git commit \
+                  -m "chore: rotation final save [no ci]" \
+                  -m "Paper ${MC_VERSION} #${PAPER_BUILD} — ${COMMIT_TS}" \
+                  --no-verify || exit 1
+              fi
+
+              if push_with_verification; then
+                ok "=== ROTATION PUSH ✅ VERIFIED AND COMPLETE ==="
+                exit 0
+              fi
+
+              err "=== ROTATION PUSH FAILED — world NOT on origin ==="
+              discord_notify "🚨 **RinaMC** — ROTATION PUSH FAILED (5× verified)! Tạo local snapshot. Rotation ABORTED — server sẽ tiếp tục chạy để không mất dữ liệu." 15158332
+              local_snapshot || true
+              exit 1
+
+            ) 9>"$BACKUP_LOCK"
+          }
+
+          local_snapshot() {
+            local _ts; _ts=$(date -u '+%Y%m%d-%H%M%S')
+            local _snap="/tmp/snap-${_ts}.tar.gz"
+            local _items=()
+
+            while IFS= read -r _d; do _items+=("$_d"); done \
+              < <(find . -maxdepth 1 -type d \
+                    \( -name "world" -o -name "world_*" -o -name "*_world" \) \
+                    ! -name ".*" | sed 's|^\./||')
+
+            for _f in server.properties bukkit.yml spigot.yml \
+                       paper-global.yml paper-world-defaults.yml \
+                       ops.json whitelist.json \
+                       banned-players.json banned-ips.json; do
+              [ -f "$_f" ] && _items+=("$_f")
+            done
+
+            if [ ${#_items[@]} -eq 0 ]; then
+              warn "local_snapshot: nothing to snapshot (no world dirs found)"
+              return 1
+            fi
+
+            if tar -czf "$_snap" "${_items[@]}" 2>/dev/null; then
+              local _size; _size=$(du -sh "$_snap" 2>/dev/null | cut -f1)
+              ok "local_snapshot: ✅ ${_snap} (${_size}) — emergency copy on runner disk"
+              local _count; _count=$(ls /tmp/snap-*.tar.gz 2>/dev/null | wc -l)
+              if (( _count > 3 )); then
+                ls -t /tmp/snap-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f
+                log "local_snapshot: pruned old snapshots (kept 3 newest)"
+              fi
+              return 0
+            else
+              warn "local_snapshot: tar failed — disk may be full"
+              rm -f "$_snap"
+              return 1
+            fi
+          }
+
+          check_backup_health() {
+            [ ! -f "${BACKUP_STATUS_FILE}" ] && return 0
+            local _last_ok _now _age
+            _last_ok=$(cat "${BACKUP_STATUS_FILE}" 2>/dev/null || echo 0)
+            _now=$(date +%s)
+            _age=$(( _now - _last_ok ))
+            if (( _age > 900 )); then
+              warn "Backup health: no successful git push in ${_age}s ($(( _age / 60 ))m)"
+              discord_notify "⚠️ **RinaMC** — Backup health alert: no successful push in $(( _age / 60 ))m. Creating local snapshot." 16776960
+              local_snapshot || true
+            fi
+          }
+
+          backup_to_external_repos() {
+            [ -z "${BACKUP_REPOS}" ] && return 0
+            local PAT="${BACKUP_PAT:-${FINE_GRAINED_PAT}}"
+            local TIMESTAMP; TIMESTAMP=$(date -u '+%Y%m%d-%H%M')
+            local ARCHIVE="/tmp/world-backup-${TIMESTAMP}.tar.gz"
+            local RETENTION="${BACKUP_RETENTION_DAYS:-7}"
+
+            local _items=()
+
+            while IFS= read -r _d; do _items+=("$_d"); done \
+              < <(find . -maxdepth 1 -type d \
+                    \( -name "world" -o -name "world_*" -o -name "*_world" \) \
+                    ! -name ".*" | sed 's|^\./||')
+
+            for _f in server.properties bukkit.yml spigot.yml \
+                       paper-global.yml paper-world-defaults.yml \
+                       ops.json whitelist.json \
+                       banned-players.json banned-ips.json \
+                       .gitignore .gitattributes; do
+              [ -f "$_f" ] && _items+=("$_f")
+            done
+
+            if [ -d plugins ]; then
+              while IFS= read -r _cfg; do _items+=("$_cfg"); done \
+                < <(find plugins -maxdepth 2 \
+                      \( -name "*.yml" -o -name "*.yaml" -o -name "*.json" \) \
+                      2>/dev/null | sed 's|^\./||')
+            fi
+
+            if [ ${#_items[@]} -eq 0 ]; then
+              warn "external-backup: no world directories found — skipping"
+              return 0
+            fi
+
+            log "external-backup: archiving worlds + configs + plugin configs..."
+            if ! tar -czf "${ARCHIVE}" "${_items[@]}" 2>/dev/null; then
+              warn "external-backup: archive creation failed"
+              return 1
+            fi
+
+            if ! gzip -t "${ARCHIVE}" 2>/dev/null; then
+              warn "external-backup: ARCHIVE INTEGRITY CHECK FAILED — gzip corrupt, skipping upload"
+              discord_notify "🚨 **RinaMC** — External backup ABORTED: archive is corrupt (gzip -t failed)! Falling back to local snapshot." 15158332
+              rm -f "${ARCHIVE}"
+              local_snapshot || true
+              return 1
+            fi
+
+            local _size; _size=$(du -sh "${ARCHIVE}" | cut -f1)
+            local _size_bytes; _size_bytes=$(stat -c%s "${ARCHIVE}" 2>/dev/null || echo 0)
+            local _checksum; _checksum=$(sha256sum "${ARCHIVE}" | cut -d' ' -f1)
+            log "external-backup: archive ${_size} (${_size_bytes}B) — SHA256: ${_checksum} ✅ integrity OK"
+
+            if (( _size_bytes < 1024 )); then
+              warn "external-backup: archive suspiciously small (${_size_bytes}B) — skipping upload"
+              discord_notify "⚠️ **RinaMC** — External backup skipped: archive only ${_size_bytes}B (world dirs may be empty)." 16776960
+              rm -f "${ARCHIVE}"
+              return 1
+            fi
+
+            local _any_success=false
+            IFS=',' read -ra _repos <<< "${BACKUP_REPOS}"
+            for _repo in "${_repos[@]}"; do
+              _repo="${_repo// /}"
+              [ -z "$_repo" ] && continue
+              log "external-backup: uploading to ${_repo}..."
+
+              local _tag="world-${TIMESTAMP}"
+              local _rel_id
+              _rel_id=$(curl -fsSL -X POST \
+                -H "Authorization: token ${PAT}" \
+                -H "Content-Type: application/json" \
+                "https://api.github.com/repos/${_repo}/releases" \
+                -d "$(jq -n \
+                        --arg t  "$_tag" \
+                        --arg n  "World Backup ${TIMESTAMP}" \
+                        --arg b  "RinaMC auto-backup\nPaper ${MC_VERSION} #${PAPER_BUILD} — ${TIMESTAMP}\nSize: ${_size}\nSHA256: ${_checksum}\nIntegrity: gzip -t PASSED ✅" \
+                        '{"tag_name":$t,"name":$n,"body":$b,"draft":false,"prerelease":false}')" \
+                | jq '.id // empty' 2>/dev/null)
+
+              if [ -z "$_rel_id" ]; then
+                warn "external-backup: could not create release in ${_repo} — skipping"
+                continue
+              fi
+
+              local _upload_ok=false _up_attempt _uploaded_asset_id=""
+              for _up_attempt in 1 2 3; do
+                local _up_response
+                _up_response=$(curl -fsSL -X POST \
+                    -H "Authorization: token ${PAT}" \
+                    -H "Content-Type: application/gzip" \
+                    "https://uploads.github.com/repos/${_repo}/releases/${_rel_id}/assets?name=world-${TIMESTAMP}.tar.gz" \
+                    --data-binary "@${ARCHIVE}" 2>/dev/null)
+                _uploaded_asset_id=$(echo "$_up_response" | jq -r '.id // empty' 2>/dev/null)
+                if [ -n "$_uploaded_asset_id" ] && [ "$_uploaded_asset_id" != "null" ]; then
+                  local _asset_size
+                  _asset_size=$(echo "$_up_response" | jq -r '.size // 0' 2>/dev/null)
+                  if (( _asset_size > 0 )); then
+                    ok "external-backup: ✅ asset verified — ${_asset_size}B on GitHub (local: ${_size_bytes}B)"
+                    _upload_ok=true
+                    break
+                  else
+                    warn "external-backup: asset created but size=0 — possible partial upload, retrying..."
+                    curl -fsSL -X DELETE \
+                      -H "Authorization: token ${PAT}" \
+                      "https://api.github.com/repos/${_repo}/releases/assets/${_uploaded_asset_id}" \
+                      > /dev/null 2>&1 || true
+                  fi
+                fi
+                warn "external-backup: upload to ${_repo} attempt ${_up_attempt}/3 failed — retrying in $((${_up_attempt} * 10))s..."
+                sleep $(( _up_attempt * 10 ))
+              done
+
+              if $_upload_ok; then
+                ok "external-backup: ✅ uploaded to ${_repo} (${_size})"
+                _any_success=true
+
+                local _cutoff
+                _cutoff=$(date -u -d "${RETENTION} days ago" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)
+                if [ -n "$_cutoff" ]; then
+                  curl -fsSL \
+                    -H "Authorization: token ${PAT}" \
+                    "https://api.github.com/repos/${_repo}/releases?per_page=100" \
+                  | jq -r --arg c "$_cutoff" '.[] | select(.created_at < $c) | .id' \
+                  2>/dev/null \
+                  | while read -r _old_id; do
+                      curl -fsSL -X DELETE \
+                        -H "Authorization: token ${PAT}" \
+                        "https://api.github.com/repos/${_repo}/releases/${_old_id}" \
+                        > /dev/null 2>&1
+                      sleep 1
+                    done
+                  log "external-backup: pruned releases older than ${RETENTION}d from ${_repo}"
+                fi
+              else
+                warn "external-backup: all 3 upload attempts failed for ${_repo}"
+                curl -fsSL -X DELETE \
+                  -H "Authorization: token ${PAT}" \
+                  "https://api.github.com/repos/${_repo}/releases/${_rel_id}" \
+                  > /dev/null 2>&1 || true
+              fi
+            done
+
+            rm -f "${ARCHIVE}"
+
+            if $_any_success; then
+              discord_notify "💾 **RinaMC** — External backup done ✅ (${_size} | SHA256: \`${_checksum:0:12}…\` | gzip OK ✅ | retention: ${RETENTION}d)." 3066993
+            else
+              warn "external-backup: ALL repos failed — falling back to local snapshot"
+              discord_notify "⚠️ **RinaMC** — External backup FAILED for all repos! Falling back to local snapshot on runner disk." 16776960
+              local_snapshot || true
+            fi
+          }
+
+          cancel_competing_runs() {
+            local current="$GITHUB_RUN_ID"
+            curl -fsSL \
+              -H "Authorization: token ${FINE_GRAINED_PAT}" \
+              "https://api.github.com/repos/${REPO}/actions/runs?branch=main&status=in_progress&per_page=20" \
+            | jq -r --argjson current "$current" \
+                '.workflow_runs[] | select(.id != $current) | .id' \
+            | while read -r rid; do
+                curl -fsSL -X POST \
+                  -H "Authorization: token ${FINE_GRAINED_PAT}" \
+                  "https://api.github.com/repos/${REPO}/actions/runs/${rid}/cancel" \
+                  > /dev/null 2>&1
+                log "Cancelled competing run #${rid}"
+              done
+          }
+
+          prune_old_runs() {
+            curl -fsSL \
+              -H "Authorization: token ${FINE_GRAINED_PAT}" \
+              "https://api.github.com/repos/${REPO}/actions/runs?per_page=100" \
+            | jq -r '.workflow_runs[]
+                | select(.head_commit.message | test("\\[no ci\\]"))
+                | .id' \
+            | tail -n +21 \
+            | while read -r rid; do
+                curl -fsSL -X DELETE \
+                  -H "Authorization: token ${FINE_GRAINED_PAT}" \
+                  "https://api.github.com/repos/${REPO}/actions/runs/${rid}" \
+                  > /dev/null 2>&1
+                sleep 1
+              done
+          }
+
+          write_backup_manifest() {
+            local _sha; _sha=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+            local _ts; _ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+            local _last_push; _last_push=$(cat "${BACKUP_STATUS_FILE}" 2>/dev/null || echo 0)
+            local _pd_count; _pd_count=$(find world/playerdata -name "*.dat" 2>/dev/null | wc -l || echo 0)
+
+            local _world_sizes="{"
+            local _first=true
+            while IFS= read -r _wd; do
+              local _wname; _wname=$(basename "$_wd")
+              local _wsize; _wsize=$(du -sm "$_wd" 2>/dev/null | cut -f1 || echo 0)
+              $_first || _world_sizes+=","
+              _world_sizes+="\"${_wname}\":${_wsize}"
+              _first=false
+            done < <(find . -maxdepth 1 -type d \
+                       \( -name "world" -o -name "world_*" -o -name "*_world" \) \
+                       ! -name ".*")
+            _world_sizes+="}"
+
+            jq -n \
+              --arg ts     "$_ts" \
+              --arg sha    "$_sha" \
+              --arg ver    "${MC_VERSION:-unknown}" \
+              --arg bld    "${PAPER_BUILD:-unknown}" \
+              --argjson ws  "$_world_sizes" \
+              --argjson pdc "$_pd_count" \
+              --argjson lp  "$_last_push" \
+              '{
+                timestamp: $ts,
+                git_sha: $sha,
+                paper_version: $ver,
+                paper_build: $bld,
+                world_sizes_mb: $ws,
+                playerdata_count: $pdc,
+                last_verified_push_epoch: $lp
+              }' > .backup_manifest.json 2>/dev/null
+
+            if [ $? -eq 0 ]; then
+              ok "Backup manifest written: SHA ${_sha:0:8}, ${_pd_count} players"
+              git add .backup_manifest.json 2>/dev/null || true
+            else
+              warn "write_backup_manifest: jq failed — manifest not written"
+            fi
+          }
+
+          rotation_fast_handoff() {
+            local _skip_ext_backup="${1:-false}"
+
+            write_backup_manifest
+            if ! git diff --cached --quiet 2>/dev/null; then
+              git commit \
+                -m "chore: rotation manifest [no ci]" \
+                -m "SHA snapshot before runner handoff — Paper ${MC_VERSION} #${PAPER_BUILD}" \
+                --no-verify 2>/dev/null || true
+              push_with_verification || {
+                warn "rotation_fast_handoff: manifest push failed — proceeding anyway"
+              }
+            fi
+
+            create_github_release "rotation" || true
+
+            local _expected_sha; _expected_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+            log "rotation_fast_handoff: final SHA ${_expected_sha:0:8}"
+
+            trigger_rotation
+            ok "rotation_fast_handoff: ✅ new runner dispatched — GHA overhead starts now"
+            discord_notify "🔄 **RinaMC** — Runner mới đã dispatch (\`${_expected_sha:0:8}\`). Server sẽ online lại trong ~3-4 phút." 3447003
+
+            if [ "$_skip_ext_backup" != "true" ]; then
+              local _disk_avail_kb; _disk_avail_kb=$(df --output=avail / | tail -1)
+              if (( _disk_avail_kb > 2097152 )); then
+                log "rotation_fast_handoff: running external backup IN PARALLEL with new runner warmup..."
+                backup_to_external_repos
+              else
+                warn "rotation_fast_handoff: disk < 2 GB — skipping external backup to avoid filling disk"
+                discord_notify "⚠️ **RinaMC** — Rotation: external backup skipped (disk critical). Git backup OK ✅." 16776960
+              fi
+            else
+              log "rotation_fast_handoff: external backup skipped (caller requested)"
+            fi
+
+            local _poll_wait=0 _new_run_found=false
+            while (( _poll_wait < 180 )); do
+              sleep 10; (( _poll_wait += 10 ))
+              local _run_sha
+              _run_sha=$(curl -fsSL \
+                -H "Authorization: token ${FINE_GRAINED_PAT}" \
+                "https://api.github.com/repos/${REPO}/actions/runs?event=workflow_dispatch&per_page=5" \
+                2>/dev/null \
+                | jq -r '[.workflow_runs[] | select(.status == "queued" or .status == "in_progress")] | first | .head_sha // empty' \
+                2>/dev/null || echo "")
+
+              if [ -n "$_run_sha" ]; then
+                if [ "$_run_sha" = "$_expected_sha" ]; then
+                  ok "rotation_fast_handoff: ✅ new runner confirmed (SHA ${_run_sha:0:8}, waited ${_poll_wait}s)"
+                  _new_run_found=true; break
+                else
+                  log "rotation_fast_handoff: found run SHA ${_run_sha:0:8} (expected ${_expected_sha:0:8}) — waiting..."
+                fi
+              fi
+            done
+
+            if ! $_new_run_found; then
+              warn "rotation_fast_handoff: new runner not confirmed after ${_poll_wait}s"
+              warn "  Expected SHA: ${_expected_sha:0:8}"
+              warn "  Check Actions tab — runner may still start correctly."
+              discord_notify "⚠️ **RinaMC** — Rotation: new runner SHA \`${_expected_sha:0:8}\` not confirmed after ${_poll_wait}s. Check Actions tab." 16776960
+            fi
+          }
+
+          rotation_verified_handoff() {
+            rotation_fast_handoff "$@"
+          }
+
+          create_github_release() {
+            local _reason="${1:-rotation}"
+            local _pat="${FINE_GRAINED_PAT:-$(cat "${_PAT_CACHE:-/dev/null}" 2>/dev/null || echo "")}"
+            [ -z "$_pat" ] && { warn "create_github_release: no PAT available — skipping"; return 0; }
+
+            local _ts; _ts=$(date -u '+%Y%m%d-%H%M')
+            local _tag="server-${_ts}"
+            local _sha; _sha=$(git rev-parse HEAD 2>/dev/null | cut -c1-8 || echo "unknown")
+            local _uptime_min=$(( ($(date +%s) - START_TIME) / 60 ))
+
+            local _disk_gb; _disk_gb=$(df --output=avail / | tail -1 | awk '{printf "%.1f", $1/1024/1024}' 2>/dev/null || echo "?")
+            local _ram_mb;  _ram_mb=$(awk '/^MemAvailable/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || echo "?")
+            local _pd_count; _pd_count=$(find world/playerdata -name "*.dat" 2>/dev/null | wc -l || echo 0)
+            local _world_size; _world_size=$(du -sh world 2>/dev/null | cut -f1 || echo "?")
+
+            local _last_list
+            _last_list=$(grep -i "There are.*player" logs/latest.log 2>/dev/null | tail -1 | sed 's/.*\[Server thread.*\]: //' || echo "")
+
+            local _body="## 🎮 RinaMC Auto-Release"
+            _body+=$'\n\n'"**Reason:** \`${_reason}\`"
+            _body+=$'\n'"**Paper:** ${MC_VERSION:-?} build #${PAPER_BUILD:-?}"
+            _body+=$'\n'"**Uptime:** ${_uptime_min} min"
+            _body+=$'\n'"**Git SHA:** \`${_sha}\`"
+            _body+=$'\n'"**World size:** ${_world_size} | **Players DB:** ${_pd_count} files"
+            _body+=$'\n'"**Disk free:** ${_disk_gb} GB | **RAM free:** ${_ram_mb} MB"
+            [ -n "$_last_list" ] && _body+=$'\n'"**Last /list:** ${_last_list}"
+            if [ -n "${BACKUP_REPOS}" ]; then
+              _body+=$'\n\n'"> 💾 World archive uploaded to external backup repos (see BACKUP_REPOS secret)."
+            fi
+
+            log "create_github_release: creating tag ${_tag}..."
+
+            local _rel_id
+            _rel_id=$(curl -fsSL -X POST \
+              -H "Authorization: token ${_pat}" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/${REPO}/releases" \
+              -d "$(jq -n \
+                    --arg t  "$_tag" \
+                    --arg n  "🎮 RinaMC — Paper ${MC_VERSION:-?} #${PAPER_BUILD:-?} | $(date -u '+%Y-%m-%d %H:%M UTC')" \
+                    --arg b  "$_body" \
+                    --arg sha "$_sha" \
+                    '{tag_name:$t,name:$n,body:$b,target_commitish:$sha,draft:false,prerelease:false}')" \
+              2>/dev/null | jq -r '.id // empty' 2>/dev/null)
+
+            if [ -z "$_rel_id" ]; then
+              warn "create_github_release: could not create release (PAT may lack 'contents:write')"
+              return 1
+            fi
+
+            ok "create_github_release: ✅ Release '${_tag}' created (id: ${_rel_id})"
+            discord_notify "🏷️ **RinaMC** — GitHub Release [\`${_tag}\`](https://github.com/${REPO}/releases/tag/${_tag}) tạo xong. Uptime: ${_uptime_min} min." 3066993
+
+            if [ -z "${BACKUP_REPOS}" ]; then
+              local _disk_avail_kb; _disk_avail_kb=$(df --output=avail / | tail -1)
+              if (( _disk_avail_kb > 2097152 )); then
+                local _archive="/tmp/release-world-${_ts}.tar.gz"
+                local _items=()
+                while IFS= read -r _d; do _items+=("$_d"); done \
+                  < <(find . -maxdepth 1 -type d \( -name "world" -o -name "world_*" -o -name "*_world" \) ! -name ".*" | sed 's|^\./||')
+                for _f in server.properties bukkit.yml spigot.yml ops.json whitelist.json; do
+                  [ -f "$_f" ] && _items+=("$_f")
+                done
+                if (( ${#_items[@]} > 0 )) && tar -czf "$_archive" "${_items[@]}" 2>/dev/null; then
+                  local _arc_bytes; _arc_bytes=$(stat -c%s "$_archive" 2>/dev/null || echo 0)
+                  if (( _arc_bytes < 1800000000 )); then
+                    local _arc_size; _arc_size=$(du -sh "$_archive" | cut -f1)
+                    log "create_github_release: uploading world archive ${_arc_size}..."
+                    curl -fsSL -X POST \
+                      -H "Authorization: token ${_pat}" \
+                      -H "Content-Type: application/gzip" \
+                      "https://uploads.github.com/repos/${REPO}/releases/${_rel_id}/assets?name=world-${_ts}.tar.gz" \
+                      --data-binary "@${_archive}" > /dev/null 2>&1 \
+                      && ok "create_github_release: world archive uploaded (${_arc_size})" \
+                      || warn "create_github_release: archive upload failed (release metadata still saved)"
+                  else
+                    warn "create_github_release: archive too large (${_arc_bytes}B >= 1.8 GB) — skipping upload, metadata only"
+                  fi
+                  rm -f "$_archive"
+                fi
+              fi
+            fi
+          }
+
+          trigger_rotation() {
+            local payload
+            payload=$(jq -n \
+              --arg ref "main" \
+              --arg ver "${MC_VERSION}" \
+              --arg bld "${PAPER_BUILD}" \
+              --arg tun "${TUNNEL_TYPE}" \
+              '{"ref":$ref,"inputs":{"mc_version":$ver,"paper_build":$bld,"tunnel_type":$tun}}')
+
+            curl -fsSL -X POST \
+              -H "Authorization: token ${FINE_GRAINED_PAT}" \
+              -H "Accept: application/vnd.github.v3+json"  \
+              -H "Content-Type: application/json"          \
+              "https://api.github.com/repos/${REPO}/actions/workflows/CI.yml/dispatches" \
+              -d "$payload"
+            ok "Rotation triggered (tunnel: ${TUNNEL_TYPE})"
+          }
+
+          download_plugins() {
+            log "plugin-updater: checking for updates..."
+            mkdir -p plugins
+
+            local gh_auth=()
+            [ -n "${FINE_GRAINED_PAT}" ] && gh_auth=(-H "Authorization: token ${FINE_GRAINED_PAT}")
+
+            geysermc_download() {
+              local project="$1" display="$2" prefix="$3"
+              local api="https://download.geysermc.org/v2/projects/${project}/versions/latest/builds/latest"
+              local info version build filename
+              info=$(curl -fsSL "$api" 2>/dev/null) || {
+                warn "plugin-updater: cannot reach geysermc API for ${display}"
+                return 1
+              }
+              version=$(echo "$info" | jq -r '.version')
+              build=$(echo "$info"   | jq -r '.build')
+              filename=$(echo "$info" | jq -r '.downloads.spigot.name')
+              if [ -z "$filename" ] || [ "$filename" = "null" ]; then
+                warn "plugin-updater: ${display} — unexpected API response"
+                return 1
+              fi
+              if [ -f "plugins/${filename}" ]; then
+                log "plugin-updater: ${display} ${version}#${build} — already up to date"
+                return 0
+              fi
+              find plugins/ -maxdepth 1 -name "${prefix}*.jar" -not -name "$filename" -delete 2>/dev/null || true
+              log "plugin-updater: downloading ${display} ${version}#${build}..."
+              if curl -fsSL "${api}/downloads/spigot" -o "plugins/${filename}"; then
+                ok "plugin-updater: ${display} ${version}#${build} -> plugins/${filename}"
+              else
+                warn "plugin-updater: ${display} download failed"
+                rm -f "plugins/${filename}" 2>/dev/null || true
+                return 1
+              fi
+            }
+
+            github_download() {
+              local repo="$1" pattern="$2" display="$3" prefix="$4"
+              local info tag filename download_url
+              info=$(curl -fsSL "${gh_auth[@]}"                 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null) || {
+                warn "plugin-updater: cannot reach GitHub API for ${display}"
+                return 1
+              }
+              tag=$(echo "$info" | jq -r '.tag_name')
+              filename=$(echo "$info"                 | jq -r --arg p "$pattern" '.assets[] | select(.name | test($p)) | .name' | head -1)
+              download_url=$(echo "$info"                 | jq -r --arg p "$pattern" '.assets[] | select(.name | test($p)) | .browser_download_url' | head -1)
+              if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
+                warn "plugin-updater: ${display} ${tag} — no asset matching '${pattern}'"
+                return 1
+              fi
+              if [ -f "plugins/${filename}" ]; then
+                log "plugin-updater: ${display} ${tag} — already up to date"
+                return 0
+              fi
+              find plugins/ -maxdepth 1 -name "${prefix}*.jar" -not -name "$filename" -delete 2>/dev/null || true
+              log "plugin-updater: downloading ${display} ${tag}..."
+              if curl -fsSL -L "$download_url" -o "plugins/${filename}"; then
+                ok "plugin-updater: ${display} ${tag} -> plugins/${filename}"
+              else
+                warn "plugin-updater: ${display} download failed"
+                rm -f "plugins/${filename}" 2>/dev/null || true
+                return 1
+              fi
+            }
+
+            geysermc_download "geyser"    "GeyserMC"        "Geyser"
+            geysermc_download "floodgate" "Floodgate"       "floodgate"
+            github_download "ViaVersion/ViaVersion"   "^ViaVersion-[0-9].*\.jar$"   "ViaVersion"       "ViaVersion"
+            github_download "ViaVersion/ViaBackwards" "^ViaBackwards-[0-9].*\.jar$" "ViaBackwards"     "ViaBackwards"
+            local _ct _ct_installed _ct_url
+            _ct=$(curl -fsSL "${gh_auth[@]}" \
+              "https://api.github.com/repos/minekube/connect-java/releases/latest" \
+              2>/dev/null | jq -r '.tag_name // empty')
+            if [ -z "$_ct" ]; then
+              warn "plugin-updater: Minekube Connect — cannot reach GitHub API"
+            else
+              _ct_installed=$(cat "plugins/.connect-spigot.version" 2>/dev/null || echo "")
+              if [ "$_ct_installed" = "$_ct" ] && [ -f "plugins/connect-spigot.jar" ]; then
+                log "plugin-updater: Minekube Connect ${_ct} — already up to date"
+              else
+                _ct_url="https://github.com/minekube/connect-java/releases/download/${_ct}/connect-spigot.jar"
+                log "plugin-updater: downloading Minekube Connect ${_ct}..."
+                if curl -fsSL -L "$_ct_url" -o "plugins/connect-spigot.jar"; then
+                  echo "$_ct" > "plugins/.connect-spigot.version"
+                  ok "plugin-updater: Minekube Connect ${_ct} -> plugins/connect-spigot.jar"
+                else
+                  warn "plugin-updater: Minekube Connect download failed"
+                  rm -f "plugins/connect-spigot.jar" "plugins/.connect-spigot.version" 2>/dev/null || true
+                fi
+              fi
+            fi
+
+            log "plugin-updater: done ($(find plugins/ -maxdepth 1 -name '*.jar' 2>/dev/null | wc -l) JARs in plugins/)"
+          }
+
+          _emergency_save() {
+            warn "SIGTERM/SIGINT received — emergency world save..."
+            discord_notify "⚠️ **RinaMC** — Job cancelled! Emergency save in progress..." 16776960
+
+            if [ -n "${SERVER_PID}" ] && kill -0 "${SERVER_PID}" 2>/dev/null; then
+              mkdir -p world/playerdata world/stats world/advancements
+              mc_cmd "save-all flush"
+
+              local _em_log_before=0 _em_ok=false _em_wait=0
+              [ -f logs/latest.log ] && _em_log_before=$(wc -l < logs/latest.log 2>/dev/null || echo 0)
+              sleep 1
+              while (( _em_wait < 9 )); do
+                if [ -f logs/latest.log ] && \
+                   tail -n +"$(( _em_log_before + 1 ))" logs/latest.log 2>/dev/null \
+                     | grep -qi "Saved the game\|saved the world\|save complete"; then
+                  _em_ok=true; break
+                fi
+                sleep 1; (( _em_wait++ )) || true
+              done
+              $_em_ok \
+                && ok "Emergency: save confirmed in ${_em_wait}s" \
+                || warn "Emergency: save confirmation not seen — killing anyway"
+
+              kill -SIGKILL "${SERVER_PID}" 2>/dev/null || true
+              wait "${SERVER_PID}" 2>/dev/null || true
+              ok "Paper killed after emergency flush"
+            fi
+
+            if commit_and_push; then
+              ok "Emergency save committed and pushed"
+              discord_notify "💾 **RinaMC** — Emergency save ✅ done. Server offline." 3066993
+            else
+              warn "Emergency push failed — creating local snapshot as secondary backup"
+              if local_snapshot; then
+                discord_notify "⚠️ **RinaMC** — Emergency push failed but LOCAL SNAPSHOT created on runner disk. Runner resets on job end — recover before it expires!" 16776960
+              else
+                discord_notify "🚨 **RinaMC** — EMERGENCY PUSH AND LOCAL SNAPSHOT BOTH FAILED! Data from this session may be at risk." 15158332
+              fi
+            fi
+
+            exit 0
+          }
+
+          trap '_emergency_save' SIGTERM SIGINT
+
+          setup_git
+          setup_tunnel
+          download_plugins
+          start_paper
+          start_tunnel
+          discord_notify "✅ **RinaMC** — Online (Paper ${MC_VERSION} #${PAPER_BUILD}, tunnel: ${TUNNEL_TYPE})." 3066993
+
+          SSHX_SESSION_URL=""
+
+          if [ -n "${SSHX_ENABLED}" ]; then
+            _PAT_CACHE=/tmp/.gha_rotation_pat_$$
+            printf '%s' "${FINE_GRAINED_PAT}" > "$_PAT_CACHE"
+            chmod 600 "$_PAT_CACHE"
+            trigger_rotation() {
+              local _pat="${FINE_GRAINED_PAT:-$(cat "$_PAT_CACHE" 2>/dev/null || echo "")}"
+              local payload
+              payload=$(jq -n \
+                --arg ref "main" \
+                --arg ver "${MC_VERSION}" \
+                --arg bld "${PAPER_BUILD}" \
+                --arg tun "${TUNNEL_TYPE}" \
+                '{"ref":$ref,"inputs":{"mc_version":$ver,"paper_build":$bld,"tunnel_type":$tun}}')
+              curl -fsSL -X POST \
+                -H "Authorization: token ${_pat}" \
+                -H "Accept: application/vnd.github.v3+json"  \
+                -H "Content-Type: application/json"          \
+                "https://api.github.com/repos/${REPO}/actions/workflows/CI.yml/dispatches" \
+                -d "$payload"
+              ok "Rotation triggered (tunnel: ${TUNNEL_TYPE})"
+            }
+            unset FINE_GRAINED_PAT PLAYIT_SECRET DISCORD_WEBHOOK
+            unset BACKUP_PAT SSHX_ENABLED TUNNEL_TYPE_SECRET TUNNEL_TYPE_INPUT
+            log "sshx: installing (secrets scrubbed from env)..."
+            if ! curl -sSf https://sshx.io/get | sudo sh 2>/dev/null; then
+              warn "sshx install failed — skipping console"
+            else
+              ok "sshx installed"
+
+              sudo apt-get install -y -qq tmux 2>/dev/null || true
+
+              tmux new-session -d -s mc -n "MC Console"                 "echo '=== MC Console ===';
+                 _w=0;
+                 while [ ! -f logs/latest.log ] && (( _w < 60 )); do
+                   printf '\r[%2ds] Waiting for Paper to start...' \"\$_w\";
+                   sleep 1; (( _w++ )) || true;
+                 done; echo '';
+                 if [ -f logs/latest.log ]; then
+                   tail -n 50 -f logs/latest.log;
+                 else
+                   echo '[WARN] logs/latest.log not found after 60s.';
+                 fi;
+                 echo '--- Log ended. Ctrl+B 1 = command input. ---';
+                 exec bash --norc --noprofile" 2>/dev/null || true
+
+              tmux new-window -t mc -n "MC Commands" \
+                "echo '╔═══════════════════════════════════════╗';
+                 echo '║   Minecraft Command Console           ║';
+                 echo '╠═══════════════════════════════════════╣';
+                 echo '║  Type command + Enter to send         ║';
+                 echo '║  Examples:  say Hello  |  op Name     ║';
+                 echo '║  stop  → clean shutdown (no restart)   ║';
+                 echo '║  Ctrl+B 0  → switch to live log view  ║';
+                 echo '╚═══════════════════════════════════════╝';
+                 echo '';
+                 while true; do
+                   printf '> ';
+                   IFS= read -r _cmd || break;
+                   if [ \"\$_cmd\" = 'stop' ]; then
+                     echo '>> [ADMIN] Stop signal sent — shutting down (no rotation)...';
+                     touch /tmp/ADMIN_STOP;
+                     echo '>> Server đang dừng — window sẽ tiếp tục hiển thị.';
+                     break;
+                   elif [ -n \"\$_cmd\" ]; then
+                     if [ -p /tmp/mc_stdin ]; then
+                       timeout 2 sh -c 'printf \"%s\n\" \"$1\" > /tmp/mc_stdin' _ \"\$_cmd\" 2>/dev/null \
+                         && echo \">> Sent: \$_cmd\" \
+                         || echo '>> Write timeout — server may be restarting, try again in a moment';
+                     else
+                       echo '>> (FIFO not ready — server starting up, wait a moment)';
+                     fi;
+                   fi;
+                 done;
+                 echo '';
+                 echo '-- Command loop ended. Ctrl+B 0 = live log view. --';
+                 echo '-- Shell available below (read-only env, no secrets). --';
+                 exec bash --norc --noprofile" 2>/dev/null || true
+
+              tmux select-window -t mc:0 2>/dev/null || true
+
+              SSHX_LOG=/tmp/sshx.log
+              sshx --shell "tmux attach -t mc" > "$SSHX_LOG" 2>&1 &
+              SSHX_PID=$!
+
+              _waited=0
+              while (( _waited < 30 )); do
+                SSHX_SESSION_URL=$(grep -oP '(https?://)?sshx\.io/s/\S+' "$SSHX_LOG" 2>/dev/null | head -1 || true)
+                if [ -n "$SSHX_SESSION_URL" ]; then
+                  [[ "$SSHX_SESSION_URL" != http* ]] && SSHX_SESSION_URL="https://${SSHX_SESSION_URL}"
+                  break
+                fi
+                sleep 1; (( _waited++ )) || true
+              done
+
+              if [ -n "$SSHX_SESSION_URL" ]; then
+                ok  "sshx console ready: ${SSHX_SESSION_URL}"
+                log "  Window 0 — MC Console  (live log — opens here by default)"
+                log "  Window 1 — MC Commands (Ctrl+B 1 to switch)"
+                log "  Type 'stop' in Window 1 for a clean shutdown (no rotation)."
+                discord_notify "🖥️ **RinaMC** — Console: ${SSHX_SESSION_URL}\nMở link → thấy ngay console MC. Ctrl+B 1 để nhập lệnh." 3447003
+              else
+                warn "sshx started (PID ${SSHX_PID}) but URL not captured in 30s — dumping sshx.log:"
+                cat "$SSHX_LOG" 2>/dev/null | while IFS= read -r _line; do warn "  $_line"; done
+              fi
+            fi
+          fi
+
+          ( sleep 35 && cancel_competing_runs ) &
+
+          START_TIME=$(date +%s)
+          LAST_SAVE=0
+          LAST_GC=0
+          LAST_SQUASH=0
+          LAST_EXT_BACKUP=0
+          LAST_HEALTH_CHECK=0
+          SAVE_INTERVAL=120
+          GC_INTERVAL=1800
+          SQUASH_INTERVAL=900
+          EXT_BACKUP_INTERVAL=1800
+          HEALTH_CHECK_INTERVAL=900 # backup health alert check every 15 min
+          ROTATION_AT=17700
+
+          log "Loop active — tunnel: ${TUNNEL_TYPE} — rotating in ${ROTATION_AT}s"
+
+          while true; do
+            NOW=$(date +%s)
+            ELAPSED=$(( NOW - START_TIME ))
+            SINCE_SAVE=$(( NOW - LAST_SAVE ))
+            SINCE_GC=$(( NOW - LAST_GC ))
+            SINCE_EXT=$(( NOW - LAST_EXT_BACKUP ))
+            SINCE_SQUASH=$(( NOW - LAST_SQUASH ))
+            SINCE_HEALTH=$(( NOW - LAST_HEALTH_CHECK ))
+
+            if [ -f /tmp/ADMIN_STOP ]; then
+              log "ADMIN_STOP detected (từ sshx console) — graceful shutdown, no rotation"
+              discord_notify "🛑 **RinaMC** — Admin stop via console. Going offline (no rotation)." 15158332
+              rm -f /tmp/ADMIN_STOP
+              graceful_stop
+              commit_and_push || true
+              create_github_release "admin_stop" || true
+              log "Running external backup before exit (synchronous)..."
+              backup_to_external_repos
+              log "Server stopped cleanly by admin. Action ending."
+              exit 0
+            fi
+
+            if [ -f STOP_SERVER ]; then
+              log "STOP_SERVER detected — starting graceful shutdown"
+              discord_notify "🛑 **RinaMC** — Admin stop requested (STOP_SERVER). Going offline." 15158332
+              rm -f STOP_SERVER
+              graceful_stop
+              commit_and_push || true
+              create_github_release "stop_file" || true
+              log "Running external backup before exit (synchronous)..."
+              backup_to_external_repos
+              log "Server stopped cleanly. No rotation triggered."
+              exit 0
+            fi
+
+            check_disk_space
+            DISK_STATUS=$?
+            if (( DISK_STATUS == 2 )); then
+              graceful_stop
+              rotation_commit_and_push || true
+              rotation_fast_handoff "true"
+              exit 0
+            fi
+
+            check_repo_size &
+
+            if (( LAST_HEALTH_CHECK == 0 )); then
+              LAST_HEALTH_CHECK=$NOW
+            elif (( SINCE_HEALTH >= HEALTH_CHECK_INTERVAL )); then
+              check_backup_health &
+              LAST_HEALTH_CHECK=$NOW
+            fi
+
+            if (( SINCE_SAVE >= SAVE_INTERVAL )); then
+              if commit_and_push; then
+                log "Backup OK (+${ELAPSED}s)"
+                prune_old_runs &
+              else
+                warn "Backup failed — will retry next cycle"
+              fi
+              LAST_SAVE=$(date +%s)
+            fi
+
+            if (( LAST_SQUASH == 0 )); then
+              LAST_SQUASH=$NOW
+            elif (( SINCE_SQUASH >= SQUASH_INTERVAL )); then
+              squash_autosave_commits &
+              LAST_SQUASH=$(date +%s)
+            fi
+
+            if (( LAST_EXT_BACKUP == 0 )); then
+              LAST_EXT_BACKUP=$NOW
+            elif (( SINCE_EXT >= EXT_BACKUP_INTERVAL )); then
+              log "Starting external world backup..."
+              backup_to_external_repos &
+              LAST_EXT_BACKUP=$(date +%s)
+            fi
+
+            if (( LAST_GC == 0 )); then
+              LAST_GC=$NOW
+            elif (( SINCE_GC >= GC_INTERVAL )); then
+              log "Periodic git maintenance starting..."
+              squash_autosave_commits
+              full_repack
+              LAST_GC=$(date +%s)
+            fi
+
+            health_check_paper
+            ddos_watchdog
+
+            if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+              if [ -f /tmp/ADMIN_STOP ]; then
+                log "Paper PID gone + ADMIN_STOP pending — skipping auto-restart, waiting for admin handler..."
+                sleep 1
+                continue
+              fi
+
+              commit_and_push || true
+
+              if was_intentional_stop; then
+                warn "Paper exited via /stop — restarting in 15s"
+                warn "Tip: use 'touch STOP_SERVER && git push' for a permanent shutdown"
+                discord_notify "ℹ️ **RinaMC** — /stop detected. Auto-restarting in 15s.\n> Tip: use \`STOP_SERVER\` file to shut down permanently." 3447003
+                sleep 15
+
+                if ! start_paper; then
+                  err "Restart after /stop failed — rotating to fresh runner"
+                  discord_notify "🔄 **RinaMC** — Restart after /stop failed. Rotating." 15158332
+                  commit_and_push || true
+                  trigger_rotation; exit 0
+                fi
+
+              else
+                record_crash
+
+                analyze_crash
+
+                local _crash_report="Crash #${CRASH_COUNT}/${MAX_CRASHES} | Type: \`${CRASH_TYPE}\`"
+                [ -n "${CRASH_PLUGIN}" ] && _crash_report+=" | Plugin suspect: **${CRASH_PLUGIN}**"
+                [ -n "${CRASH_DETAIL}" ] && _crash_report+="\n> ${CRASH_DETAIL:0:200}"
+
+                if (( CRASH_COUNT >= MAX_CRASHES )); then
+                  err "Crash loop detected: ${CRASH_COUNT}× (${CRASH_TYPE}) in ${CRASH_WINDOW}s"
+                  err "Rotating to a fresh runner — check logs for root cause"
+                  discord_notify "🔄 **RinaMC** — Crash loop!\n${_crash_report}\nRotating to fresh runner." 15158332
+                  rotation_commit_and_push || commit_and_push || true
+                  trigger_rotation; exit 0
+                fi
+
+                if ! pre_restart_validation; then
+                  err "pre_restart_validation FAILED — rotating instead of restarting (crash: ${CRASH_TYPE})"
+                  discord_notify "🔄 **RinaMC** — ${_crash_report}\n⛔ Pre-restart check FAILED → rotating to fresh runner (tránh crash loop vô ích)." 15158332
+                  rotation_commit_and_push || commit_and_push || true
+                  trigger_rotation; exit 0
+                fi
+
+                warn "Paper crashed (${CRASH_COUNT}/${MAX_CRASHES}) — restarting in ${CRASH_DELAY}s... [${CRASH_TYPE}]"
+                discord_notify "⚠️ **RinaMC** — ${_crash_report}\nRestarting in ${CRASH_DELAY}s..." 16776960
+                sleep "${CRASH_DELAY}"
+
+                if ! start_paper; then
+                  err "Restart after crash failed — rotating"
+                  discord_notify "🔄 **RinaMC** — Could not restart after crash. Rotating." 15158332
+                  commit_and_push || true
+                  trigger_rotation; exit 0
+                fi
+              fi
+
+              LAST_LOG_SIZE=0
+              LAST_LOG_CHANGE=$(date +%s)
+            fi
+
+            restart_tunnel_if_dead
+
+            if (( ELAPSED >= ROTATION_AT )); then
+              log "Rotating at ${ELAPSED}s ($(( ELAPSED / 60 ))m)"
+              discord_notify "🔄 **RinaMC** — Scheduled rotation ($(( ELAPSED / 60 ))m elapsed). Server tạm offline — online lại trong ~3-4 phút." 3447003
+              graceful_stop
+              if ! rotation_commit_and_push; then
+                err "Rotation push failed — aborting rotation. Safety net will handle recovery."
+                discord_notify "🚨 **RinaMC** — Rotation ABORTED: final push failed 5×. World data NOT confirmed on origin. Safety net recovering..." 15158332
+                exit 1
+              fi
+              rotation_fast_handoff
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+      - name: ♻️ Rerun on unexpected failure
+        if: failure()
+        env:
+          FINE_GRAINED_PAT: ${{ secrets.FINE_GRAINED_PAT }}
+        run: |
+          RECENT_DISPATCH=$(curl -fsSL \
+            -H "Authorization: token ${FINE_GRAINED_PAT}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs?event=workflow_dispatch&per_page=50" \
+            | jq '[.workflow_runs[] | select(.status != "in_progress")] | length' \
+            2>/dev/null || echo 0)
+
+          if (( RECENT_DISPATCH >= 45 )); then
+            echo "⚠️ Rerun guard: ${RECENT_DISPATCH} recent dispatch runs — crash-loop suspected."
+            echo "   Auto-rerun disabled. Please investigate workflow logs, then re-trigger manually."
+            exit 0
+          fi
+
+          curl -fsSL -X POST \
+            -H "Authorization: token ${FINE_GRAINED_PAT}" \
+            -H "Accept: application/vnd.github.v3+json"  \
+            -H "Content-Type: application/json"          \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/CI.yml/dispatches" \
+            -d '{"ref":"main"}'
+          echo "♻️ Failure recovery triggered (recent dispatches: ${RECENT_DISPATCH})"
