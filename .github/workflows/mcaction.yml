@@ -1,4 +1,4 @@
-name: 🎮 Minecraft Server (Paper) v26
+name: 🎮 Minecraft Server MCActions v4.1
 
 on:
   push:
@@ -97,6 +97,15 @@ jobs:
             "*.jfr"
             "*.jfr.tmp"
             "plugins/spark/tmp/"
+            # Plugin databases — KHÔNG đưa vào git để tránh SQLite READONLY_DBMOVED
+            # (git stash/reset move file trên disk → SQLite thấy inode đổi → readonly error)
+            "plugins/**/*.db"
+            "plugins/**/*.db3"
+            "plugins/**/*.mv.db"
+            "plugins/**/*.mv.db.trace.db"
+            "plugins/**/*.mv.db.lock"
+            "plugins/**/*.db-shm"
+            "plugins/**/*.db-wal"
           )
           CHANGED=false
           for entry in "${PROTECTED[@]}"; do
@@ -352,6 +361,9 @@ jobs:
           DDOS_CONN_THRESHOLD=15
 
           health_check_paper() {
+            # AUTO-KILL DISABLED — server chỉ được restart khi PID thực sự biến mất
+            # hoặc admin dùng STOP_SERVER / ADMIN_STOP. Xóa /list probe + force-kill
+            # để tránh kill nhầm server đang idle (không có người chơi = ít log).
             [ ! -f logs/latest.log ] && return 0
             local cur_size now stale
             cur_size=$(stat -c%s logs/latest.log 2>/dev/null || echo 0)
@@ -363,26 +375,9 @@ jobs:
             fi
             if (( LAST_LOG_CHANGE > 0 )); then
               stale=$(( now - LAST_LOG_CHANGE ))
-              if (( stale >= HEALTH_TIMEOUT )); then
-                warn "Server log silent for ${stale}s — probing with /list before kill..."
-                local _probe_before
-                _probe_before=$(wc -l < logs/latest.log 2>/dev/null || echo 0)
-                mc_cmd "list"
-                local _probe_wait=0
-                while (( _probe_wait < 8 )); do
-                  sleep 1; (( _probe_wait++ )) || true
-                  if tail -n +"$(( _probe_before + 1 ))" logs/latest.log 2>/dev/null \
-                       | grep -qi "There are.*player\|players online\|\\[Server\\]"; then
-                    ok "health_check: /list responded in ${_probe_wait}s — server is alive (was just idle)"
-                    LAST_LOG_SIZE=$(stat -c%s logs/latest.log 2>/dev/null || echo 0)
-                    LAST_LOG_CHANGE=$(date +%s)
-                    return 0
-                  fi
-                done
-                warn "Server silent ${stale}s + no /list response → JVM hung. Force-killing..."
-                discord_notify "⚠️ **RinaMC** — Unresponsive for ${stale}s (no /list reply). Force-restarting." 16776960
-                kill -SIGKILL "${SERVER_PID}" 2>/dev/null || true
-                LAST_LOG_CHANGE=$(date +%s)
+              # Chỉ warn — KHÔNG kill. Server idle (0 player) có thể im lặng nhiều giờ.
+              if (( stale >= HEALTH_TIMEOUT && stale % 900 < 10 )); then
+                warn "health_check: log silent for ${stale}s — server may be idle (no auto-kill)"
               fi
             fi
           }
@@ -408,6 +403,8 @@ jobs:
           }
 
           ddos_watchdog() {
+            # AUTO-ROTATION bị tắt — chỉ warn/notify. Rotation tự động vì DDoS
+            # quá nhạy cảm và gây downtime không cần thiết khi server bị lag bình thường.
             [ ! -f logs/latest.log ] && return 0
             local now; now=$(date +%s)
             local lag_count
@@ -415,15 +412,11 @@ jobs:
               | { grep -c "Can't keep up\|Running.*behind, skipping" 2>/dev/null || true; })
             if (( lag_count >= 3 )); then
               (( DDOS_LAG_COUNT++ )) || true
-              warn "ddos_watchdog: server overload (${lag_count} lag events, streak ${DDOS_LAG_COUNT}/${DDOS_LAG_MAX})"
+              warn "ddos_watchdog: server overload (${lag_count} lag events, streak ${DDOS_LAG_COUNT}/${DDOS_LAG_MAX}) — monitor only, no kill"
               if (( DDOS_LAG_COUNT >= DDOS_LAG_MAX )); then
-                err "ddos_watchdog: persistent overload — rotating (possible DDoS/flood)"
-                discord_notify "🛡️ **RinaMC** — Persistent overload (possible DDoS, ${DDOS_LAG_COUNT}x streak). Rotating." 15158332
-                graceful_stop
-                rotation_commit_and_push || commit_and_push || true
-                trigger_rotation; exit 0
+                discord_notify "🛡️ **RinaMC** — Persistent overload (${DDOS_LAG_COUNT}x streak). Server vẫn chạy — kiểm tra thủ công." 16776960
+                DDOS_LAG_COUNT=0  # reset để tránh spam notify
               fi
-              discord_notify "🛡️ **RinaMC** — Overload detected: ${lag_count} lag events (streak ${DDOS_LAG_COUNT}/${DDOS_LAG_MAX})." 16776960
             else
               (( DDOS_LAG_COUNT > 0 )) && (( DDOS_LAG_COUNT-- )) || true
             fi
@@ -433,9 +426,8 @@ jobs:
                 | { grep -c "IP REDACTED" 2>/dev/null || true; })
               if (( conn_count >= DDOS_CONN_THRESHOLD )); then
                 DDOS_LAST_FLOOD_WARN=$now
-                warn "ddos_watchdog: connection flood — ${conn_count} IPs in last 50 log lines"
-                discord_notify "🛡️ **RinaMC** — Connection flood: ${conn_count} connections in last 50 lines. Kicking all players." 15158332
-                mc_cmd "kick @a Maintenance: connection flood protection active"
+                warn "ddos_watchdog: connection flood — ${conn_count} IPs in last 50 log lines (warn only)"
+                discord_notify "🛡️ **RinaMC** — Connection flood: ${conn_count} connections. Server vẫn online." 16776960
               fi
             fi
           }
@@ -784,7 +776,161 @@ jobs:
             fi
           }
 
+          # ── In-game player notifications ───────────────────────────────────
+          # level: info | warn | error | critical
+          # msg: ASCII only (MC title không nhận tiếng Việt raw tốt)
+          mc_notify_players() {
+            local level="$1" msg="$2"
+            [ -z "${SERVER_PID}" ] && return 0
+            ! kill -0 "${SERVER_PID}" 2>/dev/null && return 0
+
+            local color prefix
+            case "$level" in
+              info)     color='\\u00a7a'; prefix='[OK]'     ;;
+              warn)     color='\\u00a7e'; prefix='[WARN]'   ;;
+              error)    color='\\u00a7c'; prefix='[ERROR]'  ;;
+              critical) color='\\u00a74'; prefix='[CRITICAL]';;
+              *)        color='\\u00a7f'; prefix='[INFO]'   ;;
+            esac
+
+            # Title ngắn gọn + actionbar giữ lâu hơn (40 tick = 2s)
+            mc_cmd "title @a times 10 80 20"
+            mc_cmd "title @a subtitle {\"text\":\"${msg}\",\"color\":\"$(
+              case "$level" in
+                info)     echo "green"    ;;
+                warn)     echo "yellow"   ;;
+                error)    echo "red"      ;;
+                critical) echo "dark_red" ;;
+                *)        echo "white"    ;;
+              esac
+            )\",\"bold\":false}"
+            mc_cmd "title @a title {\"text\":\"Server Notice\",\"color\":\"gold\",\"bold\":true}"
+            # Actionbar để player thấy kể cả khi đóng inventory
+            mc_cmd "title @a actionbar {\"text\":\"${msg}\"}"
+            # Chat message — lưu lại trong chat history của player
+            mc_cmd "tellraw @a {\"text\":\"\\u00a78[\\u00a76Server\\u00a78] ${color}${msg}\"}"
+          }
+
+          # ── Plugin database monitor ────────────────────────────────────────
+          PLUGIN_DB_ERR_COUNT=0
+          PLUGIN_DB_LAST_ALERT=0
+          PLUGIN_DB_ALERT_COOLDOWN=180   # tối đa 1 alert per 3 phút
+
+          monitor_plugin_databases() {
+            [ ! -f logs/latest.log ] && return 0
+            local now; now=$(date +%s)
+
+            # Chỉ scan 300 dòng cuối để tránh re-process toàn bộ log
+            local recent
+            recent=$(tail -n 300 logs/latest.log 2>/dev/null || echo "")
+
+            # ── SQLite errors (UltraSetHome, LuckPerms SQLite, v.v.) ──────────
+            if echo "$recent" | grep -qiE \
+               "SQLITE_READONLY|SQLITE_BUSY|SQLITE_LOCKED|attempt to write a readonly database|SQLITE_CORRUPT|database disk image is malformed"; then
+
+              (( PLUGIN_DB_ERR_COUNT++ )) || true
+
+              # Chỉ alert nếu đủ cooldown (tránh spam mỗi 10s)
+              if (( now - PLUGIN_DB_LAST_ALERT >= PLUGIN_DB_ALERT_COOLDOWN )); then
+                PLUGIN_DB_LAST_ALERT=$now
+
+                # Tìm tên plugin từ stack trace
+                local _db_plugin
+                _db_plugin=$(echo "$recent" \
+                  | grep -E "\.jar//" | grep -oE "[A-Za-z][A-Za-z0-9._-]+-[0-9]+\.[0-9]+.*\.jar" \
+                  | head -1 | sed 's/-[0-9].*//' || echo "unknown-plugin")
+
+                local _sqlite_type
+                _sqlite_type=$(echo "$recent" \
+                  | grep -oiE "SQLITE_READONLY_DBMOVED|SQLITE_READONLY|SQLITE_BUSY|SQLITE_LOCKED|SQLITE_CORRUPT" \
+                  | head -1 || echo "SQLITE_ERROR")
+
+                warn "Plugin DB: ${_sqlite_type} in ${_db_plugin} (error #${PLUGIN_DB_ERR_COUNT})"
+
+                # Thông báo cho player đang online
+                mc_notify_players "warn" "Plugin DB error (${_db_plugin}) - data may not save!"
+
+                local _discord_color=16776960  # yellow
+                local _discord_msg="🗄️ **RinaMC** — Plugin database error!\n"
+                _discord_msg+="**Type:** \`${_sqlite_type}\`\n"
+                _discord_msg+="**Plugin:** \`${_db_plugin}\`\n"
+                _discord_msg+="**Count:** ${PLUGIN_DB_ERR_COUNT}×\n"
+                _discord_msg+="> Dữ liệu plugin *có thể không được lưu*. Nếu lỗi tiếp tục hãy restart server."
+
+                # SQLite READONLY_DBMOVED = file bị move khi đang mở → nghiêm trọng hơn
+                if echo "$_sqlite_type" | grep -q "READONLY_DBMOVED"; then
+                  _discord_color=15158332  # red
+                  _discord_msg="🚨 **RinaMC** — **SQLITE_READONLY_DBMOVED** trong **${_db_plugin}**!\n"
+                  _discord_msg+="> Database bị di chuyển sau khi plugin mở → **dữ liệu không được lưu**.\n"
+                  _discord_msg+="> Nguyên nhân thường gặp: git stash/reset làm move file DB.\n"
+                  _discord_msg+="> Fix: thêm \`plugins/**/*.db\` và \`plugins/**/*.db-*\` vào .gitignore."
+                  mc_notify_players "error" "DB MOVED ERROR - Contact admin immediately!"
+                fi
+
+                discord_notify "${_discord_msg}" "${_discord_color}"
+
+                # Force save để giảm thiểu mất dữ liệu
+                mc_cmd "save-all flush"
+                log "Plugin DB: forced save-all flush after database error"
+              fi
+
+              # Nếu lỗi quá nhiều lần → cảnh báo nghiêm trọng
+              if (( PLUGIN_DB_ERR_COUNT >= 5 && (now - PLUGIN_DB_LAST_ALERT) >= 600 )); then
+                PLUGIN_DB_LAST_ALERT=$now
+                err "Plugin DB: ${PLUGIN_DB_ERR_COUNT}× errors — possible database corruption risk"
+                mc_notify_players "critical" "CRITICAL: Plugin DB failing repeatedly! Data at risk!"
+                discord_notify "🚨 **RinaMC** — Plugin DB critical: **${PLUGIN_DB_ERR_COUNT}×** errors!\n> Database có thể bị corrupt. Player data có nguy cơ mất. Khuyến nghị restart." 15158332
+              fi
+            fi
+
+            # ── MySQL / MariaDB connection errors ─────────────────────────────
+            if echo "$recent" | grep -qiE \
+               "Communications link failure|Connection refused.*330[6-7]|MySQL.*lost connection|Too many connections|Access denied for user.*mysql"; then
+              if (( now - PLUGIN_DB_LAST_ALERT >= PLUGIN_DB_ALERT_COOLDOWN )); then
+                PLUGIN_DB_LAST_ALERT=$now
+                warn "Plugin DB: MySQL/MariaDB connection error detected"
+                mc_notify_players "warn" "MySQL connection lost - plugin data may not save!"
+                discord_notify "🗄️ **RinaMC** — MySQL/MariaDB connection failure!\n> Plugin data có thể không được lưu. Kiểm tra database server." 16776960
+                mc_cmd "save-all flush"
+              fi
+            fi
+
+            # ── H2 database errors ────────────────────────────────────────────
+            if echo "$recent" | grep -qiE \
+               "org\.h2\.|H2.*Exception|JdbcSQLException|MVStoreException"; then
+              if (( now - PLUGIN_DB_LAST_ALERT >= PLUGIN_DB_ALERT_COOLDOWN )); then
+                PLUGIN_DB_LAST_ALERT=$now
+                warn "Plugin DB: H2 database error detected"
+                mc_notify_players "warn" "H2 database error - plugin data may not save!"
+                discord_notify "🗄️ **RinaMC** — H2 database error!\n> Kiểm tra plugin dùng H2 (LuckPerms, EssentialsX, v.v.)." 16776960
+                mc_cmd "save-all flush"
+              fi
+            fi
+
+            # ── Generic "failed to save" from any plugin ──────────────────────
+            if echo "$recent" | grep -qiE \
+               "failed to save.*data|could not save.*player|error saving.*database|failed to write.*data"; then
+              if (( now - PLUGIN_DB_LAST_ALERT >= PLUGIN_DB_ALERT_COOLDOWN )); then
+                PLUGIN_DB_LAST_ALERT=$now
+                local _save_plugin
+                _save_plugin=$(echo "$recent" \
+                  | grep -iE "failed to save|could not save|error saving" \
+                  | head -1 | grep -oE "\[[A-Za-z0-9_-]+\]" | head -1 | tr -d '[]' || echo "plugin")
+                warn "Plugin DB: save failure detected from ${_save_plugin}"
+                mc_notify_players "warn" "Plugin save error (${_save_plugin}) - contact admin!"
+                discord_notify "🗄️ **RinaMC** — Plugin save failure!\n**Plugin:** \`${_save_plugin}\`\n> Data có thể không được lưu." 16776960
+              fi
+            fi
+          }
+
           graceful_stop() {
+            log "Graceful stop: notifying players..."
+            mc_notify_players "warn" "Server restarting in 10s - please find a safe spot!"
+            sleep 5
+            mc_notify_players "warn" "Server restarting in 5s..."
+            sleep 3
+            mc_notify_players "error" "Server going down NOW - see you soon!"
+            sleep 2
             log "Graceful stop: save-all flush..."
             mkdir -p world/playerdata world/stats world/advancements
             mc_cmd "save-all flush"
@@ -1020,6 +1166,12 @@ jobs:
                 logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
                 "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
                 playit STOP_SERVER
+              # Plugin DB files không được vào git → SQLite READONLY_DBMOVED khi stash/reset move file
+              git reset -- \
+                "plugins/**/*.db" "plugins/**/*.db3" "plugins/**/*.mv.db" \
+                "plugins/**/*.db-shm" "plugins/**/*.db-wal" \
+                "plugins/**/*.mv.db.trace.db" "plugins/**/*.mv.db.lock" \
+                2>/dev/null || true
 
               git diff --cached --quiet && exit 0
 
@@ -1059,6 +1211,11 @@ jobs:
                 logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
                 "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
                 playit STOP_SERVER 2>/dev/null || true
+              git reset -- \
+                "plugins/**/*.db" "plugins/**/*.db3" "plugins/**/*.mv.db" \
+                "plugins/**/*.db-shm" "plugins/**/*.db-wal" \
+                "plugins/**/*.mv.db.trace.db" "plugins/**/*.mv.db.lock" \
+                2>/dev/null || true
 
               git diff --cached --quiet && exit 0
 
@@ -1077,6 +1234,7 @@ jobs:
 
               err "commit_and_push: push_with_verification failed — creating local snapshot"
               discord_notify "🚨 **RinaMC** — Git push failed 5× (verified)! Local snapshot saved. Check PAT / network." 15158332
+              mc_notify_players "error" "Backup FAILED 5x - local snapshot only. Risk of data loss!"
               local_snapshot || true
               exit 1
 
@@ -1095,8 +1253,11 @@ jobs:
                 logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
                 "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
                 playit STOP_SERVER 2>/dev/null || true
-
-              local _rot_corrupt=0
+              git reset -- \
+                "plugins/**/*.db" "plugins/**/*.db3" "plugins/**/*.mv.db" \
+                "plugins/**/*.db-shm" "plugins/**/*.db-wal" \
+                "plugins/**/*.mv.db.trace.db" "plugins/**/*.mv.db.lock" \
+                2>/dev/null || true
               while IFS= read -r _d; do
                 local _dsz; _dsz=$(stat -c%s "$_d" 2>/dev/null || echo 0)
                 if (( _dsz < 10 )); then
@@ -1142,6 +1303,11 @@ jobs:
                 logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
                 "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
                 playit STOP_SERVER 2>/dev/null || true
+              git reset -- \
+                "plugins/**/*.db" "plugins/**/*.db3" "plugins/**/*.mv.db" \
+                "plugins/**/*.db-shm" "plugins/**/*.db-wal" \
+                "plugins/**/*.mv.db.trace.db" "plugins/**/*.mv.db.lock" \
+                2>/dev/null || true
 
               if git diff --cached --quiet; then
                 log "rotation_push: no staged changes vs origin — verifying remote SHA..."
@@ -1199,6 +1365,17 @@ jobs:
               [ -f "$_f" ] && _items+=("$_f")
             done
 
+            # ── Plugin databases: SQLite .db/.db3, H2 .mv.db, flat-file data ──
+            local _db_count=0
+            while IFS= read -r _db; do
+              _items+=("$_db")
+              (( _db_count++ )) || true
+            done < <(find plugins -maxdepth 3 \
+                       \( -name "*.db" -o -name "*.db3" -o -name "*.mv.db" \
+                          -o -name "*.mv.db.trace.db" -o -name "*.mv.db.lock" \) \
+                       ! -path "*/spark/*" ! -path "*/.git/*" 2>/dev/null | sed 's|^\./||')
+            (( _db_count > 0 )) && log "local_snapshot: including ${_db_count} plugin database file(s)"
+
             if [ ${#_items[@]} -eq 0 ]; then
               warn "local_snapshot: nothing to snapshot (no world dirs found)"
               return 1
@@ -1229,6 +1406,7 @@ jobs:
             if (( _age > 900 )); then
               warn "Backup health: no successful git push in ${_age}s ($(( _age / 60 ))m)"
               discord_notify "⚠️ **RinaMC** — Backup health alert: no successful push in $(( _age / 60 ))m. Creating local snapshot." 16776960
+              mc_notify_players "warn" "Backup offline $(( _age / 60 ))min - data may not be saved to cloud!"
               local_snapshot || true
             fi
           }
@@ -1678,6 +1856,7 @@ jobs:
           _emergency_save() {
             warn "SIGTERM/SIGINT received — emergency world save..."
             discord_notify "⚠️ **RinaMC** — Job cancelled! Emergency save in progress..." 16776960
+            mc_notify_players "critical" "SERVER EMERGENCY SHUTDOWN - saving data now!"
 
             if [ -n "${SERVER_PID}" ] && kill -0 "${SERVER_PID}" 2>/dev/null; then
               mkdir -p world/playerdata world/stats world/advancements
@@ -1942,6 +2121,7 @@ jobs:
 
             health_check_paper
             ddos_watchdog
+            monitor_plugin_databases
 
             if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
               if [ -f /tmp/ADMIN_STOP ]; then
@@ -1970,9 +2150,13 @@ jobs:
 
                 analyze_crash
 
-                local _crash_report="Crash #${CRASH_COUNT}/${MAX_CRASHES} | Type: \`${CRASH_TYPE}\`"
+                # FIX: 'local' chỉ hợp lệ trong function — dùng biến thường trong main loop
+                _crash_report="Crash #${CRASH_COUNT}/${MAX_CRASHES} | Type: \`${CRASH_TYPE}\`"
                 [ -n "${CRASH_PLUGIN}" ] && _crash_report+=" | Plugin suspect: **${CRASH_PLUGIN}**"
                 [ -n "${CRASH_DETAIL}" ] && _crash_report+="\n> ${CRASH_DETAIL:0:200}"
+
+                # Thông báo cho player biết server sẽ restart
+                mc_notify_players "error" "Server crashed (${CRASH_TYPE}) - restarting in ${CRASH_DELAY}s..."
 
                 if (( CRASH_COUNT >= MAX_CRASHES )); then
                   err "Crash loop detected: ${CRASH_COUNT}× (${CRASH_TYPE}) in ${CRASH_WINDOW}s"
