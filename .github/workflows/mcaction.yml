@@ -1,4 +1,4 @@
-name: 🎮 Minecraft Server (Paper) v26
+name: 🎮 Minecraft Server (Paper) v25
 
 on:
   push:
@@ -669,6 +669,7 @@ jobs:
             -XX:+UseG1GC
             -XX:+ParallelRefProcEnabled
             -XX:MaxGCPauseMillis=200
+            -XX:+UnlockExperimentalVMOptions
             -XX:+DisableExplicitGC
             -XX:+AlwaysPreTouch
             -XX:G1NewSizePercent=30
