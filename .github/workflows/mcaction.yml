@@ -1,4 +1,4 @@
-name: 🎮 Minecraft Server (Paper) v25
+name: 🎮 Minecraft Server (Paper) v26
 
 on:
   push:
@@ -412,7 +412,7 @@ jobs:
             local now; now=$(date +%s)
             local lag_count
             lag_count=$(tail -n 100 logs/latest.log 2>/dev/null \
-              | grep -c "Can't keep up\|Running.*behind, skipping" 2>/dev/null || echo 0)
+              | { grep -c "Can't keep up\|Running.*behind, skipping" 2>/dev/null || true; })
             if (( lag_count >= 3 )); then
               (( DDOS_LAG_COUNT++ )) || true
               warn "ddos_watchdog: server overload (${lag_count} lag events, streak ${DDOS_LAG_COUNT}/${DDOS_LAG_MAX})"
@@ -430,7 +430,7 @@ jobs:
             if (( now - DDOS_LAST_FLOOD_WARN >= DDOS_FLOOD_COOLDOWN )); then
               local conn_count
               conn_count=$(tail -n 50 logs/latest.log 2>/dev/null \
-                | grep -c "IP REDACTED" 2>/dev/null || echo 0)
+                | { grep -c "IP REDACTED" 2>/dev/null || true; })
               if (( conn_count >= DDOS_CONN_THRESHOLD )); then
                 DDOS_LAST_FLOOD_WARN=$now
                 warn "ddos_watchdog: connection flood — ${conn_count} IPs in last 50 log lines"
@@ -1063,7 +1063,7 @@ jobs:
               git diff --cached --quiet && exit 0
 
               local _pd_count
-              _pd_count=$(git diff --cached --name-only 2>/dev/null | grep -c "world/playerdata/" || echo 0)
+              _pd_count=$(git diff --cached --name-only 2>/dev/null | grep -c "world/playerdata/" || true)
               (( _pd_count > 0 )) && log "commit_and_push: staging ${_pd_count} playerdata file(s)"
 
               git commit \
@@ -1161,7 +1161,7 @@ jobs:
               else
                 local COMMIT_TS; COMMIT_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
                 local _pd_final
-                _pd_final=$(git diff --cached --name-only 2>/dev/null | grep -c "world/playerdata/" || echo 0)
+                _pd_final=$(git diff --cached --name-only 2>/dev/null | grep -c "world/playerdata/" || true)
                 log "rotation_push: committing final state (${_pd_final} playerdata files)..."
                 git commit \
                   -m "chore: rotation final save [no ci]" \
