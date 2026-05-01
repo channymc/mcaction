@@ -59,10 +59,10 @@ jobs:
           persist-credentials: false
           token: ${{ secrets.FINE_GRAINED_PAT }}
 
-      - name: ☕ Setup Java 21 (Temurin)
+      - name: ☕ Setup Java 25 (Temurin)
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'temurin'
 
       - name: 📦 Cache system packages
@@ -1713,61 +1713,8 @@ jobs:
               fi
             }
 
-            github_download() {
-              local repo="$1" pattern="$2" display="$3" prefix="$4"
-              local info tag filename download_url
-              info=$(curl -fsSL "${gh_auth[@]}"                 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null) || {
-                warn "plugin-updater: cannot reach GitHub API for ${display}"
-                return 1
-              }
-              tag=$(echo "$info" | jq -r '.tag_name')
-              filename=$(echo "$info"                 | jq -r --arg p "$pattern" '.assets[] | select(.name | test($p)) | .name' | head -1)
-              download_url=$(echo "$info"                 | jq -r --arg p "$pattern" '.assets[] | select(.name | test($p)) | .browser_download_url' | head -1)
-              if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
-                warn "plugin-updater: ${display} ${tag} — no asset matching '${pattern}'"
-                return 1
-              fi
-              if [ -f "plugins/${filename}" ]; then
-                log "plugin-updater: ${display} ${tag} — already up to date"
-                return 0
-              fi
-              find plugins/ -maxdepth 1 -name "${prefix}*.jar" -not -name "$filename" -delete 2>/dev/null || true
-              log "plugin-updater: downloading ${display} ${tag}..."
-              if curl -fsSL -L "$download_url" -o "plugins/${filename}"; then
-                ok "plugin-updater: ${display} ${tag} -> plugins/${filename}"
-              else
-                warn "plugin-updater: ${display} download failed"
-                rm -f "plugins/${filename}" 2>/dev/null || true
-                return 1
-              fi
-            }
-
             geysermc_download "geyser"    "GeyserMC"        "Geyser"
             geysermc_download "floodgate" "Floodgate"       "floodgate"
-            github_download "ViaVersion/ViaVersion"   "^ViaVersion-[0-9].*\.jar$"   "ViaVersion"       "ViaVersion"
-            github_download "ViaVersion/ViaBackwards" "^ViaBackwards-[0-9].*\.jar$" "ViaBackwards"     "ViaBackwards"
-            local _ct _ct_installed _ct_url
-            _ct=$(curl -fsSL "${gh_auth[@]}" \
-              "https://api.github.com/repos/minekube/connect-java/releases/latest" \
-              2>/dev/null | jq -r '.tag_name // empty')
-            if [ -z "$_ct" ]; then
-              warn "plugin-updater: Minekube Connect — cannot reach GitHub API"
-            else
-              _ct_installed=$(cat "plugins/.connect-spigot.version" 2>/dev/null || echo "")
-              if [ "$_ct_installed" = "$_ct" ] && [ -f "plugins/connect-spigot.jar" ]; then
-                log "plugin-updater: Minekube Connect ${_ct} — already up to date"
-              else
-                _ct_url="https://github.com/minekube/connect-java/releases/download/${_ct}/connect-spigot.jar"
-                log "plugin-updater: downloading Minekube Connect ${_ct}..."
-                if curl -fsSL -L "$_ct_url" -o "plugins/connect-spigot.jar"; then
-                  echo "$_ct" > "plugins/.connect-spigot.version"
-                  ok "plugin-updater: Minekube Connect ${_ct} -> plugins/connect-spigot.jar"
-                else
-                  warn "plugin-updater: Minekube Connect download failed"
-                  rm -f "plugins/connect-spigot.jar" "plugins/.connect-spigot.version" 2>/dev/null || true
-                fi
-              fi
-            fi
 
             log "plugin-updater: done ($(find plugins/ -maxdepth 1 -name '*.jar' 2>/dev/null | wc -l) JARs in plugins/)"
           }
