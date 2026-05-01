@@ -15,3 +15,10 @@ plugins/spark/tmp/
 !world/stats/*.json
 !world/advancements/
 !world/advancements/*.json
+plugins/**/*.db
+plugins/**/*.db3
+plugins/**/*.mv.db
+plugins/**/*.mv.db.trace.db
+plugins/**/*.mv.db.lock
+plugins/**/*.db-shm
+plugins/**/*.db-wal
