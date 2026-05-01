@@ -1,18 +1,10 @@
-name: 🎮 Minecraft Server (Paper) v25
+name: 🎮 Minecraft Server (Paper) v26
 
 on:
   push:
     branches: ["main"]
   workflow_dispatch:
     inputs:
-      mc_version:
-        description: 'Minecraft version (empty = latest stable)'
-        required: false
-        default: ''
-      paper_build:
-        description: 'Paper build number (empty = latest)'
-        required: false
-        default: ''
       tunnel_type:
         description: 'Tunnel: playit | none'
         required: false
@@ -94,7 +86,6 @@ jobs:
         run: |
           # ── .gitignore ─────────────────────────────────────────────────────
           declare -a PROTECTED=(
-            "paper.jar"
             "playit"
             "*.log"
             "logs/"
@@ -194,90 +185,20 @@ jobs:
             echo "✅ After cleanup: ${NEW_MB} MB (saved $(( REPO_MB - NEW_MB )) MB)"
           fi
 
-      - name: 🔍 Resolve Paper version & build
-        id: paper
-        env:
-          INPUT_VERSION: ${{ github.event.inputs.mc_version }}
-          INPUT_BUILD:   ${{ github.event.inputs.paper_build }}
-        run: |
-          if [ -z "${INPUT_VERSION}" ]; then
-            ALL_VERSIONS=$(curl -fsSL "https://api.papermc.io/v2/projects/paper" | jq -r '.versions[]')
-            MC_VERSION=$(echo "$ALL_VERSIONS" \
-              | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' | sort -V | tail -1)
-          else
-            MC_VERSION=$(printf '%s' "${INPUT_VERSION}" | tr -cd '0-9.')
-          fi
-
-          BUILDS_JSON=$(curl -fsSL \
-            "https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds")
-
-          if [ -z "${INPUT_BUILD}" ]; then
-            PAPER_BUILD=$(echo "$BUILDS_JSON" \
-              | jq '[.builds[] | select(.channel == "default")] | last | .build')
-            if [ -z "$PAPER_BUILD" ] || [ "$PAPER_BUILD" = "null" ]; then
-              PAPER_BUILD=$(echo "$BUILDS_JSON" | jq '.builds | last | .build')
-            fi
-          else
-            PAPER_BUILD=$(printf '%s' "${INPUT_BUILD}" | tr -cd '0-9')
-          fi
-
-          JAR_NAME="paper-${MC_VERSION}-${PAPER_BUILD}.jar"
-          DOWNLOAD_URL="https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds/${PAPER_BUILD}/downloads/${JAR_NAME}"
-
-          # Lấy SHA256 từ BUILDS_JSON đã có — không cần curl thêm ở bước download
-          PAPER_SHA256=$(echo "$BUILDS_JSON" \
-            | jq -r --argjson b "${PAPER_BUILD}" \
-              '.builds[] | select(.build == $b) | .downloads.application.sha256' \
-            2>/dev/null || echo "")
-
-          echo "mc_version=${MC_VERSION}"     >> "$GITHUB_OUTPUT"
-          echo "paper_build=${PAPER_BUILD}"   >> "$GITHUB_OUTPUT"
-          echo "jar_name=${JAR_NAME}"         >> "$GITHUB_OUTPUT"
-          echo "download_url=${DOWNLOAD_URL}" >> "$GITHUB_OUTPUT"
-          echo "paper_sha256=${PAPER_SHA256}" >> "$GITHUB_OUTPUT"
-          echo "cache_key=paper-${MC_VERSION}-${PAPER_BUILD}" >> "$GITHUB_OUTPUT"
-          echo "📋 Paper ${MC_VERSION} build #${PAPER_BUILD}"
-
-      - name: 💾 Cache Paper JAR
-        id: cache_paper
-        uses: actions/cache@v4
-        with:
-          path: paper.jar
-          key: ${{ steps.paper.outputs.cache_key }}
-
-      - name: ⬇️ Download & verify Paper JAR
-        if: steps.cache_paper.outputs.cache-hit != 'true'
-        env:
-          DOWNLOAD_URL: ${{ steps.paper.outputs.download_url }}
-          MC_VERSION:   ${{ steps.paper.outputs.mc_version }}
-          PAPER_BUILD:  ${{ steps.paper.outputs.paper_build }}
-          EXPECTED_SHA: ${{ steps.paper.outputs.paper_sha256 }}
-        run: |
-          echo "⬇️ Downloading Paper ${MC_VERSION} build #${PAPER_BUILD}..."
-          curl -fsSL "${DOWNLOAD_URL}" -o paper.jar
-
-          # SHA đã được resolve ở bước trước — không cần curl thêm
-          if [ -z "${EXPECTED_SHA}" ]; then
-            EXPECTED_SHA=$(curl -fsSL \
-              "https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds/${PAPER_BUILD}" \
-              | jq -r ".downloads.application.sha256")
-          fi
-
-          ACTUAL_SHA=$(sha256sum paper.jar | cut -d' ' -f1)
-          if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-            echo "❌ SHA256 MISMATCH — aborting!"
-            echo "   Expected : ${EXPECTED_SHA}"
-            echo "   Got      : ${ACTUAL_SHA}"
-            exit 1
-          fi
-          echo "✅ SHA256 OK — $(du -sh paper.jar | cut -f1)"
-
       - name: 📋 Runner info & Accept EULA
         run: |
           echo "=== Hardware ===" && nproc && free -h && df -h /
           echo "=== Java ===" && java -version
           echo "eula=true" > eula.txt
           echo "✅ EULA accepted"
+
+          # Kiểm tra server.jar có trong repo không
+          if [ ! -f server.jar ]; then
+            echo "❌ server.jar không tìm thấy trong repo! Hãy commit file server.jar vào repo trước."
+            exit 1
+          fi
+          JAR_SIZE=$(du -sh server.jar | cut -f1)
+          echo "✅ server.jar tìm thấy (${JAR_SIZE})"
 
       - name: 🚀 Run Paper Server
         if: "!contains(github.event.head_commit.message, '[no ci]')"
@@ -286,8 +207,6 @@ jobs:
         env:
           FINE_GRAINED_PAT: ${{ secrets.FINE_GRAINED_PAT }}
           REPO:             ${{ github.repository }}
-          MC_VERSION:       ${{ steps.paper.outputs.mc_version }}
-          PAPER_BUILD:      ${{ steps.paper.outputs.paper_build }}
 
           DISCORD_WEBHOOK:  ${{ secrets.DISCORD_WEBHOOK }}
 
@@ -338,7 +257,7 @@ jobs:
 
             git commit \
               -m "chore: world snapshot [no ci]" \
-              -m "Squashed ${count} auto-saves — Paper ${MC_VERSION} #${PAPER_BUILD} — $(date -u '+%Y-%m-%d %H:%M UTC')" \
+              -m "Squashed ${count} auto-saves — server.jar — $(date -u '+%Y-%m-%d %H:%M UTC')" \
               --no-verify 2>/dev/null \
               || { warn "squash: commit failed"; git reset --hard HEAD 2>/dev/null; exit 1; }
 
@@ -445,7 +364,7 @@ jobs:
             if (( LAST_LOG_CHANGE > 0 )); then
               stale=$(( now - LAST_LOG_CHANGE ))
               if (( stale >= HEALTH_TIMEOUT )); then
-                warn "Paper log silent for ${stale}s — probing with /list before kill..."
+                warn "Server log silent for ${stale}s — probing with /list before kill..."
                 local _probe_before
                 _probe_before=$(wc -l < logs/latest.log 2>/dev/null || echo 0)
                 mc_cmd "list"
@@ -460,7 +379,7 @@ jobs:
                     return 0
                   fi
                 done
-                warn "Paper silent ${stale}s + no /list response → JVM hung. Force-killing..."
+                warn "Server silent ${stale}s + no /list response → JVM hung. Force-killing..."
                 discord_notify "⚠️ **RinaMC** — Unresponsive for ${stale}s (no /list reply). Force-restarting." 16776960
                 kill -SIGKILL "${SERVER_PID}" 2>/dev/null || true
                 LAST_LOG_CHANGE=$(date +%s)
@@ -625,7 +544,7 @@ jobs:
             local _avail_kb; _avail_kb=$(df --output=avail / | tail -1 2>/dev/null || echo 999999999)
             local _avail_gb=$(( _avail_kb / 1024 / 1024 ))
             if (( _avail_kb < 1048576 )); then
-              err "pre_restart: disk critically low (${_avail_gb} GB) — Paper cannot write world → BLOCK restart"
+              err "pre_restart: disk critically low (${_avail_gb} GB) — server cannot write world → BLOCK restart"
               _block=true; (( _issues++ )) || true
             elif (( _avail_kb < 2097152 )); then
               warn "pre_restart: disk low (${_avail_gb} GB) — restart risky but allowed"
@@ -646,16 +565,16 @@ jobs:
               ok "pre_restart: RAM OK (${_mem_mb} MB free)"
             fi
 
-            if [ ! -f paper.jar ]; then
-              err "pre_restart: paper.jar MISSING → BLOCK restart"
+            if [ ! -f server.jar ]; then
+              err "pre_restart: server.jar MISSING → BLOCK restart"
               _block=true; (( _issues++ )) || true
             else
-              local _jar_sz; _jar_sz=$(stat -c%s paper.jar 2>/dev/null || echo 0)
+              local _jar_sz; _jar_sz=$(stat -c%s server.jar 2>/dev/null || echo 0)
               if (( _jar_sz < 1000000 )); then
-                err "pre_restart: paper.jar suspiciously small (${_jar_sz}B) → BLOCK restart"
+                err "pre_restart: server.jar suspiciously small (${_jar_sz}B) → BLOCK restart"
                 _block=true; (( _issues++ )) || true
               else
-                ok "pre_restart: paper.jar OK ($(du -sh paper.jar | cut -f1))"
+                ok "pre_restart: server.jar OK ($(du -sh server.jar | cut -f1))"
               fi
             fi
 
@@ -743,11 +662,13 @@ jobs:
           }
 
           JVM_FLAGS=(
+            # ── Heap ─────────────────────────────────────────────────────────
             -Xms8G -Xmx8G
+
+            # ── GC: G1GC (Aikar's Flags — https://mcflags.emc.gs) ───────────
             -XX:+UseG1GC
             -XX:+ParallelRefProcEnabled
             -XX:MaxGCPauseMillis=200
-            -XX:+UnlockExperimentalVMOptions
             -XX:+DisableExplicitGC
             -XX:+AlwaysPreTouch
             -XX:G1NewSizePercent=30
@@ -762,11 +683,19 @@ jobs:
             -XX:SurvivorRatio=32
             -XX:+PerfDisableSharedMem
             -XX:MaxTenuringThreshold=1
-            -XX:+OptimizeStringConcat
+
+            # ── String dedup (safe with G1GC + large heap) ───────────────────
             -XX:+UseStringDeduplication
+
+            # ── Encoding (Java 17+ cần stdout.encoding riêng) ───────────────
             -Dfile.encoding=UTF-8
+            -Dstdout.encoding=UTF-8
+
+            # ── Aikar's marker flags ─────────────────────────────────────────
             -Dusing.aikars.flags=https://mcflags.emc.gs
             -Daikars.new.flags=true
+
+            # ── Safety ───────────────────────────────────────────────────────
             -XX:+ExitOnOutOfMemoryError
           )
 
@@ -831,7 +760,7 @@ jobs:
                   local _re_ts; _re_ts=$(date -u '+%Y-%m-%d %H:%M UTC')
                   git commit \
                     -m "chore: auto-save retry-${_attempt} [no ci]" \
-                    -m "Paper ${MC_VERSION} build #${PAPER_BUILD} — ${_re_ts}" \
+                    -m "server.jar — ${_re_ts}" \
                     --no-verify 2>/dev/null || true
                   _local_sha=$(git rev-parse HEAD 2>/dev/null || echo "$_local_sha")
                 fi
@@ -867,7 +796,7 @@ jobs:
             while kill -0 "${SERVER_PID}" 2>/dev/null; do
               sleep 1; (( elapsed++ )) || true
               if (( elapsed >= timeout )); then
-                warn "Paper still alive after ${timeout}s — SIGTERM..."
+                warn "Server still alive after ${timeout}s — SIGTERM..."
                 kill -SIGTERM "${SERVER_PID}" 2>/dev/null || true
                 sleep 5
                 kill -0 "${SERVER_PID}" 2>/dev/null \
@@ -875,14 +804,14 @@ jobs:
                 break
               fi
             done
-            ok "Paper stopped (${elapsed}s)"
+            ok "Server stopped (${elapsed}s)"
 
             kill "${SSHX_PID:-}" 2>/dev/null || true
             tmux kill-session -t mc 2>/dev/null || true
           }
 
           start_paper() {
-            log "Starting Paper ${MC_VERSION} build #${PAPER_BUILD}..."
+            log "Starting server.jar..."
             mkdir -p logs
 
             if git pull --ff-only origin main 2>/dev/null; then
@@ -901,7 +830,7 @@ jobs:
             mkfifo "$STDIN_PIPE"
 
             java "${JVM_FLAGS[@]}" \
-              -jar paper.jar \
+              -jar server.jar \
               --nogui \
               < "$STDIN_PIPE" \
               > >(sed \
@@ -913,7 +842,7 @@ jobs:
 
             exec {MC_STDIN_FD}>"$STDIN_PIPE"
 
-            log "Paper PID: ${SERVER_PID}"
+            log "Server PID: ${SERVER_PID}"
 
             local log_offset=0
             if [ -f logs/latest.log ]; then
@@ -923,7 +852,7 @@ jobs:
             local timeout=180 elapsed=0
             while ! tail -n +"$((log_offset + 1))" logs/latest.log 2>/dev/null | grep -q "Done ("; do
               if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-                err "Paper died during startup!"
+                err "Server died during startup!"
                 return 1
               fi
               if (( elapsed >= timeout )); then
@@ -932,7 +861,7 @@ jobs:
               fi
               sleep 5; (( elapsed += 5 )) || true
             done
-            ok "Paper ready (startup: ${elapsed}s)"
+            ok "Server ready (startup: ${elapsed}s)"
 
             config_health_check
             configure_server_ddos_protection
@@ -1138,7 +1067,7 @@ jobs:
 
               git commit \
                 -m "chore: auto-save [no ci]" \
-                -m "Paper ${MC_VERSION} build #${PAPER_BUILD} — ${COMMIT_TS}" \
+                -m "server.jar — ${COMMIT_TS}" \
                 --no-verify || exit 1
 
               if push_with_verification; then
@@ -1226,7 +1155,7 @@ jobs:
                 warn "rotation_push: no staged changes but SHA mismatch — forcing re-push"
                 git commit --allow-empty \
                   -m "chore: rotation sync [no ci]" \
-                  -m "Force ref update — Paper ${MC_VERSION} #${PAPER_BUILD}" \
+                  -m "Force ref update — server.jar" \
                   --no-verify 2>/dev/null || true
               else
                 local COMMIT_TS; COMMIT_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
@@ -1235,7 +1164,7 @@ jobs:
                 log "rotation_push: committing final state (${_pd_final} playerdata files)..."
                 git commit \
                   -m "chore: rotation final save [no ci]" \
-                  -m "Paper ${MC_VERSION} #${PAPER_BUILD} — ${COMMIT_TS}" \
+                  -m "server.jar — ${COMMIT_TS}" \
                   --no-verify || exit 1
               fi
 
@@ -1379,7 +1308,7 @@ jobs:
                 -d "$(jq -n \
                         --arg t  "$_tag" \
                         --arg n  "World Backup ${TIMESTAMP}" \
-                        --arg b  "RinaMC auto-backup\nPaper ${MC_VERSION} #${PAPER_BUILD} — ${TIMESTAMP}\nSize: ${_size}\nSHA256: ${_checksum}\nIntegrity: gzip -t PASSED ✅" \
+                        --arg b  "RinaMC auto-backup\nserver.jar — ${TIMESTAMP}\nSize: ${_size}\nSHA256: ${_checksum}\nIntegrity: gzip -t PASSED ✅" \
                         '{"tag_name":$t,"name":$n,"body":$b,"draft":false,"prerelease":false}')" \
                 | jq '.id // empty' 2>/dev/null)
 
@@ -1512,16 +1441,12 @@ jobs:
             jq -n \
               --arg ts     "$_ts" \
               --arg sha    "$_sha" \
-              --arg ver    "${MC_VERSION:-unknown}" \
-              --arg bld    "${PAPER_BUILD:-unknown}" \
               --argjson ws  "$_world_sizes" \
               --argjson pdc "$_pd_count" \
               --argjson lp  "$_last_push" \
               '{
                 timestamp: $ts,
                 git_sha: $sha,
-                paper_version: $ver,
-                paper_build: $bld,
                 world_sizes_mb: $ws,
                 playerdata_count: $pdc,
                 last_verified_push_epoch: $lp
@@ -1542,7 +1467,7 @@ jobs:
             if ! git diff --cached --quiet 2>/dev/null; then
               git commit \
                 -m "chore: rotation manifest [no ci]" \
-                -m "SHA snapshot before runner handoff — Paper ${MC_VERSION} #${PAPER_BUILD}" \
+                -m "SHA snapshot before runner handoff — server.jar" \
                 --no-verify 2>/dev/null || true
               push_with_verification || {
                 warn "rotation_fast_handoff: manifest push failed — proceeding anyway"
@@ -1624,7 +1549,7 @@ jobs:
 
             local _body="## 🎮 RinaMC Auto-Release"
             _body+=$'\n\n'"**Reason:** \`${_reason}\`"
-            _body+=$'\n'"**Paper:** ${MC_VERSION:-?} build #${PAPER_BUILD:-?}"
+            _body+=$'\n'"**Server:** server.jar (from repo)"
             _body+=$'\n'"**Uptime:** ${_uptime_min} min"
             _body+=$'\n'"**Git SHA:** \`${_sha}\`"
             _body+=$'\n'"**World size:** ${_world_size} | **Players DB:** ${_pd_count} files"
@@ -1643,7 +1568,7 @@ jobs:
               "https://api.github.com/repos/${REPO}/releases" \
               -d "$(jq -n \
                     --arg t  "$_tag" \
-                    --arg n  "🎮 RinaMC — Paper ${MC_VERSION:-?} #${PAPER_BUILD:-?} | $(date -u '+%Y-%m-%d %H:%M UTC')" \
+                    --arg n  "🎮 RinaMC — server.jar | $(date -u '+%Y-%m-%d %H:%M UTC')" \
                     --arg b  "$_body" \
                     --arg sha "$_sha" \
                     '{tag_name:$t,name:$n,body:$b,target_commitish:$sha,draft:false,prerelease:false}')" \
@@ -1692,10 +1617,8 @@ jobs:
             local payload
             payload=$(jq -n \
               --arg ref "main" \
-              --arg ver "${MC_VERSION}" \
-              --arg bld "${PAPER_BUILD}" \
               --arg tun "${TUNNEL_TYPE}" \
-              '{"ref":$ref,"inputs":{"mc_version":$ver,"paper_build":$bld,"tunnel_type":$tun}}')
+              '{"ref":$ref,"inputs":{"tunnel_type":$tun}}')
 
             curl -fsSL -X POST \
               -H "Authorization: token ${FINE_GRAINED_PAT}" \
@@ -1776,7 +1699,7 @@ jobs:
 
               kill -SIGKILL "${SERVER_PID}" 2>/dev/null || true
               wait "${SERVER_PID}" 2>/dev/null || true
-              ok "Paper killed after emergency flush"
+              ok "Server killed after emergency flush"
             fi
 
             if commit_and_push; then
@@ -1803,7 +1726,7 @@ jobs:
           wait $PLUGINS_DL_PID     # đảm bảo plugins xong trước khi Paper start
           start_paper
           start_tunnel
-          discord_notify "✅ **RinaMC** — Online (Paper ${MC_VERSION} #${PAPER_BUILD}, tunnel: ${TUNNEL_TYPE})." 3066993
+          discord_notify "✅ **RinaMC** — Online (server.jar, tunnel: ${TUNNEL_TYPE})." 3066993
 
           SSHX_SESSION_URL=""
 
@@ -1816,10 +1739,8 @@ jobs:
               local payload
               payload=$(jq -n \
                 --arg ref "main" \
-                --arg ver "${MC_VERSION}" \
-                --arg bld "${PAPER_BUILD}" \
                 --arg tun "${TUNNEL_TYPE}" \
-                '{"ref":$ref,"inputs":{"mc_version":$ver,"paper_build":$bld,"tunnel_type":$tun}}')
+                '{"ref":$ref,"inputs":{"tunnel_type":$tun}}')
               curl -fsSL -X POST \
                 -H "Authorization: token ${_pat}" \
                 -H "Accept: application/vnd.github.v3+json"  \
@@ -2023,7 +1944,7 @@ jobs:
 
             if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
               if [ -f /tmp/ADMIN_STOP ]; then
-                log "Paper PID gone + ADMIN_STOP pending — skipping auto-restart, waiting for admin handler..."
+                log "Server PID gone + ADMIN_STOP pending — skipping auto-restart, waiting for admin handler..."
                 sleep 1
                 continue
               fi
@@ -2031,7 +1952,7 @@ jobs:
               commit_and_push || true
 
               if was_intentional_stop; then
-                warn "Paper exited via /stop — restarting in 15s"
+                warn "Server exited via /stop — restarting in 15s"
                 warn "Tip: use 'touch STOP_SERVER && git push' for a permanent shutdown"
                 discord_notify "ℹ️ **RinaMC** — /stop detected. Auto-restarting in 15s.\n> Tip: use \`STOP_SERVER\` file to shut down permanently." 3447003
                 sleep 15
@@ -2067,7 +1988,7 @@ jobs:
                   trigger_rotation; exit 0
                 fi
 
-                warn "Paper crashed (${CRASH_COUNT}/${MAX_CRASHES}) — restarting in ${CRASH_DELAY}s... [${CRASH_TYPE}]"
+                warn "Server crashed (${CRASH_COUNT}/${MAX_CRASHES}) — restarting in ${CRASH_DELAY}s... [${CRASH_TYPE}]"
                 discord_notify "⚠️ **RinaMC** — ${_crash_report}\nRestarting in ${CRASH_DELAY}s..." 16776960
                 sleep "${CRASH_DELAY}"
 
