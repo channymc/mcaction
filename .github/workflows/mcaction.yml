@@ -1,4 +1,4 @@
-name: 🎮 Minecraft Server (Paper) v24
+name: 🎮 Minecraft Server (Paper) v25
 
 on:
   push:
@@ -35,21 +35,40 @@ jobs:
       - name: 🧹 Free runner disk space
         run: |
           echo "📦 Disk before: $(df -h / | awk 'NR==2{print $4}') free"
-          sudo rm -rf /opt/hostedtoolcache || true
-          sudo rm -rf /usr/local/lib/android || true
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /opt/ghc /usr/local/.ghcup || true
-          sudo apt-get remove -y --purge             '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' 'php.*'             azure-cli google-cloud-cli google-chrome-stable             firefox powershell mono-devel libgl1-mesa-dri             2>/dev/null || true
-          sudo apt-get autoremove -y 2>/dev/null || true
-          sudo apt-get clean 2>/dev/null || true
-          sudo swapoff -a 2>/dev/null || true
-          sudo rm -f /mnt/swapfile /swapfile 2>/dev/null || true
-          sudo fallocate -l 4G /mnt/swapfile
-          sudo chmod 600 /mnt/swapfile
-          sudo mkswap /mnt/swapfile
-          sudo swapon /mnt/swapfile
+
+          # ── Xóa song song, không dùng apt (apt resolve deps rất chậm) ──────
+          sudo rm -rf \
+            /opt/hostedtoolcache \
+            /usr/local/lib/android \
+            /usr/share/dotnet /usr/lib/dotnet \
+            /opt/ghc /usr/local/.ghcup \
+            /usr/lib/llvm-* /usr/lib/llvm* \
+            /usr/share/swift \
+            /usr/local/share/powershell /opt/microsoft/powershell \
+            /usr/lib/firefox \
+            /usr/lib/mono /usr/share/mono \
+            /usr/lib/google-cloud-sdk /usr/share/google-cloud-sdk /opt/google \
+            /usr/lib/php* /usr/share/php* \
+            /opt/az /usr/lib64/az \
+            /usr/share/az_* \
+            /var/lib/apt/lists/* \
+            2>/dev/null &
+          RM_PID=$!
+
+          # ── Setup swap song song trong khi rm chạy ──────────────────────────
+          (
+            sudo swapoff -a 2>/dev/null || true
+            sudo rm -f /mnt/swapfile /swapfile 2>/dev/null || true
+            sudo fallocate -l 4G /mnt/swapfile
+            sudo chmod 600 /mnt/swapfile
+            sudo mkswap /mnt/swapfile
+            sudo swapon /mnt/swapfile
+          ) &
+          SWAP_PID=$!
+
+          wait $RM_PID $SWAP_PID
           echo "✅ Swap: $(free -h | awk '/^Swap/{print $2}') enabled"
-          echo "✅ Disk after: $(df -h / | awk 'NR==2{print $4}') free" 
+          echo "✅ Disk after: $(df -h / | awk 'NR==2{print $4}') free"
 
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
@@ -68,11 +87,12 @@ jobs:
       - name: 📦 Cache system packages
         uses: awalsh128/cache-apt-pkgs-action@v1.4.3
         with:
-          packages: jq zip
+          packages: zip          # jq đã preinstalled trên ubuntu-24.04
           version: 1.0
 
-      - name: 🛡️ Harden .gitignore
+      - name: 🛡️ Harden repo config & git storage
         run: |
+          # ── .gitignore ─────────────────────────────────────────────────────
           declare -a PROTECTED=(
             "paper.jar"
             "playit"
@@ -127,8 +147,7 @@ jobs:
             echo "✅ .gitignore + player-data dirs already hardened"
           fi
 
-      - name: 🗜️ Configure git storage optimizations
-        run: |
+          # ── .gitattributes + git config ────────────────────────────────────
           declare -A GITATTRS=(
             ["*.jar"]="binary -delta"
             ["*.mca"]="binary -delta"
@@ -189,9 +208,10 @@ jobs:
             MC_VERSION=$(printf '%s' "${INPUT_VERSION}" | tr -cd '0-9.')
           fi
 
+          BUILDS_JSON=$(curl -fsSL \
+            "https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds")
+
           if [ -z "${INPUT_BUILD}" ]; then
-            BUILDS_JSON=$(curl -fsSL \
-              "https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds")
             PAPER_BUILD=$(echo "$BUILDS_JSON" \
               | jq '[.builds[] | select(.channel == "default")] | last | .build')
             if [ -z "$PAPER_BUILD" ] || [ "$PAPER_BUILD" = "null" ]; then
@@ -204,10 +224,17 @@ jobs:
           JAR_NAME="paper-${MC_VERSION}-${PAPER_BUILD}.jar"
           DOWNLOAD_URL="https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds/${PAPER_BUILD}/downloads/${JAR_NAME}"
 
+          # Lấy SHA256 từ BUILDS_JSON đã có — không cần curl thêm ở bước download
+          PAPER_SHA256=$(echo "$BUILDS_JSON" \
+            | jq -r --argjson b "${PAPER_BUILD}" \
+              '.builds[] | select(.build == $b) | .downloads.application.sha256' \
+            2>/dev/null || echo "")
+
           echo "mc_version=${MC_VERSION}"     >> "$GITHUB_OUTPUT"
           echo "paper_build=${PAPER_BUILD}"   >> "$GITHUB_OUTPUT"
           echo "jar_name=${JAR_NAME}"         >> "$GITHUB_OUTPUT"
           echo "download_url=${DOWNLOAD_URL}" >> "$GITHUB_OUTPUT"
+          echo "paper_sha256=${PAPER_SHA256}" >> "$GITHUB_OUTPUT"
           echo "cache_key=paper-${MC_VERSION}-${PAPER_BUILD}" >> "$GITHUB_OUTPUT"
           echo "📋 Paper ${MC_VERSION} build #${PAPER_BUILD}"
 
@@ -224,15 +251,19 @@ jobs:
           DOWNLOAD_URL: ${{ steps.paper.outputs.download_url }}
           MC_VERSION:   ${{ steps.paper.outputs.mc_version }}
           PAPER_BUILD:  ${{ steps.paper.outputs.paper_build }}
+          EXPECTED_SHA: ${{ steps.paper.outputs.paper_sha256 }}
         run: |
           echo "⬇️ Downloading Paper ${MC_VERSION} build #${PAPER_BUILD}..."
           curl -fsSL "${DOWNLOAD_URL}" -o paper.jar
 
-          EXPECTED_SHA=$(curl -fsSL \
-            "https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds/${PAPER_BUILD}" \
-            | jq -r ".downloads.application.sha256")
-          ACTUAL_SHA=$(sha256sum paper.jar | cut -d' ' -f1)
+          # SHA đã được resolve ở bước trước — không cần curl thêm
+          if [ -z "${EXPECTED_SHA}" ]; then
+            EXPECTED_SHA=$(curl -fsSL \
+              "https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds/${PAPER_BUILD}" \
+              | jq -r ".downloads.application.sha256")
+          fi
 
+          ACTUAL_SHA=$(sha256sum paper.jar | cut -d' ' -f1)
           if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
             echo "❌ SHA256 MISMATCH — aborting!"
             echo "   Expected : ${EXPECTED_SHA}"
@@ -241,13 +272,12 @@ jobs:
           fi
           echo "✅ SHA256 OK — $(du -sh paper.jar | cut -f1)"
 
-      - name: 📋 Runner info
+      - name: 📋 Runner info & Accept EULA
         run: |
           echo "=== Hardware ===" && nproc && free -h && df -h /
           echo "=== Java ===" && java -version
-
-      - name: ✅ Accept EULA
-        run: echo "eula=true" > eula.txt
+          echo "eula=true" > eula.txt
+          echo "✅ EULA accepted"
 
       - name: 🚀 Run Paper Server
         if: "!contains(github.event.head_commit.message, '[no ci]')"
@@ -1713,8 +1743,10 @@ jobs:
               fi
             }
 
-            geysermc_download "geyser"    "GeyserMC"        "Geyser"
-            geysermc_download "floodgate" "Floodgate"       "floodgate"
+            # Tải song song — Geyser và Floodgate độc lập nhau
+            geysermc_download "geyser"    "GeyserMC"  "Geyser"    &
+            geysermc_download "floodgate" "Floodgate" "floodgate" &
+            wait
 
             log "plugin-updater: done ($(find plugins/ -maxdepth 1 -name '*.jar' 2>/dev/null | wc -l) JARs in plugins/)"
           }
@@ -1765,8 +1797,10 @@ jobs:
           trap '_emergency_save' SIGTERM SIGINT
 
           setup_git
-          setup_tunnel
-          download_plugins
+          download_plugins &        # ── chạy song song với setup_tunnel ──
+          PLUGINS_DL_PID=$!
+          setup_tunnel              # foreground: resolve tunnel + download playit nếu cần
+          wait $PLUGINS_DL_PID     # đảm bảo plugins xong trước khi Paper start
           start_paper
           start_tunnel
           discord_notify "✅ **RinaMC** — Online (Paper ${MC_VERSION} #${PAPER_BUILD}, tunnel: ${TUNNEL_TYPE})." 3066993
