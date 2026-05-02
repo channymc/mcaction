@@ -1,4 +1,4 @@
-name: 🎮 Minecraft Server MCActions v4.1
+name: 🎮 Minecraft Server MCActions v4.2
 
 on:
   push:
@@ -20,7 +20,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     permissions:
-      contents: read
+      contents: write   # ← create releases, push commits
+      actions:  write   # ← dispatch workflow_dispatch (trigger_rotation)
 
     steps:
 
@@ -270,7 +271,17 @@ jobs:
               --no-verify 2>/dev/null \
               || { warn "squash: commit failed"; git reset --hard HEAD 2>/dev/null; exit 1; }
 
+            # BUG FIX: verify base commit tồn tại trên origin trước khi force push
+            # Nếu base không có trên remote, squash sẽ làm mất lịch sử commit
             git fetch origin main 2>/dev/null || true
+            local _base_on_remote
+            _base_on_remote=$(git branch -r --contains "$base" 2>/dev/null | grep -c "origin/main" || echo 0)
+            if (( _base_on_remote == 0 )); then
+              warn "squash: base commit ${base:0:8} không có trên origin/main — hủy squash để tránh mất data"
+              git reset --hard origin/main 2>/dev/null || true
+              exit 0
+            fi
+
             if git push origin HEAD:main --force 2>/dev/null; then
               ok "squash: ${count} commits → 1  (unreachable blobs queued for gc)"
               discord_notify "🗜️ **RinaMC** — Squashed ${count} auto-saves → 1 commit. Repo slimmed." 3447003
@@ -709,6 +720,64 @@ jobs:
             ok "Git remote configured"
           }
 
+          # ── Untrack plugin DB files khỏi git hoàn toàn ────────────────────
+          # Root cause SQLITE_READONLY_DBMOVED:
+          #   git stash push (kể cả --include-untracked) DI CHUYEN file vào
+          #   object store → inode thay đổi → SQLite detect "file moved" → READONLY.
+          # Fix: git rm --cached để git KHÔNG theo dõi những file này.
+          # File vẫn tồn tại trên disk, git không bao giờ touch chúng nữa.
+          untrack_plugin_databases() {
+            local _db_patterns=(
+              "plugins/**/*.db"    "plugins/**/*.db3"
+              "plugins/**/*.mv.db" "plugins/**/*.db-shm"
+              "plugins/**/*.db-wal" "plugins/**/*.mv.db.trace.db"
+              "plugins/**/*.mv.db.lock"
+            )
+
+            local _tracked=()
+            while IFS= read -r _f; do
+              [ -n "$_f" ] && _tracked+=("$_f")
+            done < <(
+              git ls-files plugins/ 2>/dev/null | grep -E '\.(db|db3|mv\.db|db-shm|db-wal)$'
+            )
+
+            if (( ${#_tracked[@]} == 0 )); then
+              ok "untrack_plugin_databases: no plugin DB files tracked by git ✅"
+              return 0
+            fi
+
+            warn "untrack_plugin_databases: ${#_tracked[@]} tracked DB file(s) found — untracking now..."
+            for _f in "${_tracked[@]}"; do
+              warn "  removing from index: ${_f}"
+            done
+
+            git rm --cached "${_tracked[@]}" 2>/dev/null || true
+
+            # Ensure .gitignore blocks re-entry
+            local _gi_dirty=false
+            for _pat in "${_db_patterns[@]}"; do
+              if ! grep -qxF "$_pat" .gitignore 2>/dev/null; then
+                echo "$_pat" >> .gitignore; _gi_dirty=true
+              fi
+            done
+            $_gi_dirty && git add .gitignore 2>/dev/null || true
+
+            if ! git diff --cached --quiet 2>/dev/null; then
+              git commit \
+                -m "chore: untrack plugin databases [no ci]" \
+                -m "Fix SQLITE_READONLY_DBMOVED — git stash moves tracked files, breaking SQLite" \
+                --no-verify 2>/dev/null \
+              && ok "untrack_plugin_databases: ✅ committed" \
+              || warn "untrack_plugin_databases: commit failed"
+
+              git push origin HEAD:main --force 2>/dev/null \
+                && ok "untrack_plugin_databases: ✅ pushed" \
+                || warn "untrack_plugin_databases: push deferred to next backup cycle"
+
+              discord_notify "🗄️ **RinaMC** — Đã untrack **${#_tracked[@]}** plugin DB file(s) khỏi git index.\n> Fix SQLITE_READONLY_DBMOVED vĩnh viễn. File vẫn an toàn trên disk." 3066993
+            fi
+          }
+
           push_with_verification() {
             local _local_sha
             _local_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
@@ -748,6 +817,13 @@ jobs:
                   logs/ "*.log" "*.lock" "*.tar.gz" "*.zip" \
                   "*.tmp" "*.jfr" "*.jfr.tmp" "plugins/spark/tmp/" \
                   playit STOP_SERVER 2>/dev/null || true
+                # BUG FIX: thiếu exclusion cho plugin DB → chúng vào index
+                # khi retry, gây SQLITE_READONLY_DBMOVED sau git fetch+reset
+                git reset -- \
+                  "plugins/**/*.db" "plugins/**/*.db3" "plugins/**/*.mv.db" \
+                  "plugins/**/*.db-shm" "plugins/**/*.db-wal" \
+                  "plugins/**/*.mv.db.trace.db" "plugins/**/*.mv.db.lock" \
+                  2>/dev/null || true
 
                 if ! git diff --cached --quiet 2>/dev/null; then
                   local _re_ts; _re_ts=$(date -u '+%Y-%m-%d %H:%M UTC')
@@ -1177,16 +1253,32 @@ jobs:
 
               local COMMIT_TS; COMMIT_TS=$(date -u '+%Y-%m-%d %H:%M UTC')
 
-              local _stash_ok=false _tmp_fallback=""
-              if git stash push --include-untracked -m "cap_staging" 2>/dev/null; then
-                _stash_ok=true
-              else
-                warn "commit_and_push: stash failed — using /tmp fallback for world dirs"
-                _tmp_fallback="/tmp/world-fallback-$$"
-                mkdir -p "$_tmp_fallback"
-                find . -maxdepth 1 -type d \( -name "world" -o -name "world_*" -o -name "*_world" \) \
-                  ! -name ".*" | while IFS= read -r _wd; do
-                    cp -a "$_wd" "$_tmp_fallback/" 2>/dev/null || true
+              # ── Copy-to-tmp thay vì git stash ────────────────────────────────
+              # git stash push DI CHUYEN file (thay inode) → SQLite READONLY_DBMOVED.
+              # Copy-to-tmp không thay đổi inode của file gốc → SQLite vẫn OK.
+              local _cap_tmp="/tmp/cap-staging-$$"
+              mkdir -p "$_cap_tmp"
+              # BUG FIX: đảm bảo tmp luôn được dọn kể cả khi subshell exit sớm
+              trap 'rm -rf "$_cap_tmp" 2>/dev/null || true' EXIT
+
+              # Backup: world dirs + plugin DB files (copy, không move)
+              find . -maxdepth 1 -type d \
+                \( -name "world" -o -name "world_*" -o -name "*_world" \) \
+                ! -name ".*" | while IFS= read -r _wd; do
+                  cp -a "$_wd" "$_cap_tmp/" 2>/dev/null || true
+                done
+
+              # Backup plugin DB files riêng (bao gồm cả untracked)
+              if [ -d plugins ]; then
+                mkdir -p "$_cap_tmp/__plugin_db__"
+                find plugins -maxdepth 4 \
+                  \( -name "*.db" -o -name "*.db3" -o -name "*.mv.db" \
+                     -o -name "*.db-shm" -o -name "*.db-wal" \) \
+                  2>/dev/null | while IFS= read -r _dbf; do
+                    _rel="${_dbf#./}"
+                    _dest="$_cap_tmp/__plugin_db__/${_rel}"
+                    mkdir -p "$(dirname "$_dest")"
+                    cp -p "$_dbf" "$_dest" 2>/dev/null || true
                   done
               fi
 
@@ -1194,16 +1286,32 @@ jobs:
               git reset --hard origin/main 2>/dev/null || true
               mkdir -p world/playerdata world/stats world/advancements
 
-              if $_stash_ok; then
-                if ! git stash pop 2>/dev/null; then
-                  warn "commit_and_push: stash pop conflict — keeping world (stash) version"
-                  git diff --name-only --diff-filter=U 2>/dev/null \
-                    | xargs -r git checkout --theirs -- 2>/dev/null || true
-                fi
-              elif [ -n "$_tmp_fallback" ] && [ -d "$_tmp_fallback" ]; then
-                cp -a "$_tmp_fallback"/. . 2>/dev/null || true
-                rm -rf "$_tmp_fallback"
+              # Restore world dirs
+              if [ -d "$_cap_tmp" ]; then
+                find "$_cap_tmp" -maxdepth 1 -type d \
+                  \( -name "world" -o -name "world_*" -o -name "*_world" \) \
+                  | while IFS= read -r _wd; do
+                    cp -a "$_wd" . 2>/dev/null || true
+                  done
               fi
+
+              # Restore plugin DB files (giữ nguyên inode bằng cách overwrite nội dung,
+              # không dùng mv để không đổi inode mà SQLite đang giữ)
+              if [ -d "$_cap_tmp/__plugin_db__" ]; then
+                find "$_cap_tmp/__plugin_db__" -type f | while IFS= read -r _src; do
+                  _rel="${_src#$_cap_tmp/__plugin_db__/}"
+                  if [ -f "$_rel" ]; then
+                    # File gốc còn đó → chỉ overwrite nội dung, giữ inode
+                    cat "$_src" > "$_rel" 2>/dev/null || cp -p "$_src" "$_rel" 2>/dev/null || true
+                  else
+                    # File không còn (vd: git reset xóa) → restore bình thường
+                    mkdir -p "$(dirname "$_rel")"
+                    cp -p "$_src" "$_rel" 2>/dev/null || true
+                  fi
+                done
+              fi
+
+              rm -rf "$_cap_tmp"
 
               mkdir -p world/playerdata world/stats world/advancements
               git add -A 2>/dev/null || true
@@ -1258,6 +1366,7 @@ jobs:
                 "plugins/**/*.db-shm" "plugins/**/*.db-wal" \
                 "plugins/**/*.mv.db.trace.db" "plugins/**/*.mv.db.lock" \
                 2>/dev/null || true
+              local _rot_corrupt=0  # BUG FIX: khởi tạo tường minh tránh inherit từ parent
               while IFS= read -r _d; do
                 local _dsz; _dsz=$(stat -c%s "$_d" 2>/dev/null || echo 0)
                 if (( _dsz < 10 )); then
@@ -1269,16 +1378,28 @@ jobs:
               (( _rot_corrupt > 0 )) && \
                 discord_notify "⚠️ **RinaMC** — Rotation: ${_rot_corrupt} corrupt .dat excluded from final push." 16776960
 
-              local _rot_stash_ok=false _rot_tmp=""
-              if git stash push --include-untracked -m "rotation_final_staging" 2>/dev/null; then
-                _rot_stash_ok=true
-              else
-                warn "rotation_push: stash failed — /tmp fallback"
-                _rot_tmp="/tmp/rot-world-$$"
-                mkdir -p "$_rot_tmp"
-                find . -maxdepth 1 -type d \( -name "world" -o -name "world_*" -o -name "*_world" \) \
-                  ! -name ".*" | while IFS= read -r _wd; do
-                    cp -a "$_wd" "$_rot_tmp/" 2>/dev/null || true
+              # ── Copy-to-tmp (same as commit_and_push — no stash, no inode change) ─
+              local _rot_tmp="/tmp/rot-staging-$$"
+              mkdir -p "$_rot_tmp"
+              # BUG FIX: cleanup trap để tránh /tmp đầy khi rotation fail
+              trap 'rm -rf "$_rot_tmp" 2>/dev/null || true' EXIT
+
+              find . -maxdepth 1 -type d \
+                \( -name "world" -o -name "world_*" -o -name "*_world" \) \
+                ! -name ".*" | while IFS= read -r _wd; do
+                  cp -a "$_wd" "$_rot_tmp/" 2>/dev/null || true
+                done
+
+              if [ -d plugins ]; then
+                mkdir -p "$_rot_tmp/__plugin_db__"
+                find plugins -maxdepth 4 \
+                  \( -name "*.db" -o -name "*.db3" -o -name "*.mv.db" \
+                     -o -name "*.db-shm" -o -name "*.db-wal" \) \
+                  2>/dev/null | while IFS= read -r _dbf; do
+                    _rel="${_dbf#./}"
+                    _dest="$_rot_tmp/__plugin_db__/${_rel}"
+                    mkdir -p "$(dirname "$_dest")"
+                    cp -p "$_dbf" "$_dest" 2>/dev/null || true
                   done
               fi
 
@@ -1286,16 +1407,27 @@ jobs:
               git reset --hard origin/main 2>/dev/null || true
               mkdir -p world/playerdata world/stats world/advancements
 
-              if $_rot_stash_ok; then
-                if ! git stash pop 2>/dev/null; then
-                  warn "rotation_push: stash pop conflict — keeping world version"
-                  git diff --name-only --diff-filter=U 2>/dev/null \
-                    | xargs -r git checkout --theirs -- 2>/dev/null || true
-                fi
-              elif [ -n "$_rot_tmp" ] && [ -d "$_rot_tmp" ]; then
-                cp -a "$_rot_tmp"/. . 2>/dev/null || true
-                rm -rf "$_rot_tmp"
+              if [ -d "$_rot_tmp" ]; then
+                find "$_rot_tmp" -maxdepth 1 -type d \
+                  \( -name "world" -o -name "world_*" -o -name "*_world" \) \
+                  | while IFS= read -r _wd; do
+                    cp -a "$_wd" . 2>/dev/null || true
+                  done
               fi
+
+              if [ -d "$_rot_tmp/__plugin_db__" ]; then
+                find "$_rot_tmp/__plugin_db__" -type f | while IFS= read -r _src; do
+                  _rel="${_src#$_rot_tmp/__plugin_db__/}"
+                  if [ -f "$_rel" ]; then
+                    cat "$_src" > "$_rel" 2>/dev/null || cp -p "$_src" "$_rel" 2>/dev/null || true
+                  else
+                    mkdir -p "$(dirname "$_rel")"
+                    cp -p "$_src" "$_rel" 2>/dev/null || true
+                  fi
+                done
+              fi
+
+              rm -rf "$_rot_tmp"
 
               mkdir -p world/playerdata world/stats world/advancements
               git add -A 2>/dev/null || true
@@ -1401,6 +1533,9 @@ jobs:
             [ ! -f "${BACKUP_STATUS_FILE}" ] && return 0
             local _last_ok _now _age
             _last_ok=$(cat "${BACKUP_STATUS_FILE}" 2>/dev/null || echo 0)
+            # BUG FIX: _last_ok=0 → age = now ≈ nhiều triệu giây → false alert
+            # Chỉ check nếu file chứa epoch hợp lệ (> năm 2020 = 1577836800)
+            (( _last_ok < 1577836800 )) && return 0
             _now=$(date +%s)
             _age=$(( _now - _last_ok ))
             if (( _age > 900 )); then
@@ -1658,7 +1793,7 @@ jobs:
             local _expected_sha; _expected_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
             log "rotation_fast_handoff: final SHA ${_expected_sha:0:8}"
 
-            trigger_rotation
+            trigger_rotation || warn "trigger_rotation: dispatch failed — check PAT actions:write + CI.yml filename"
             ok "rotation_fast_handoff: ✅ new runner dispatched — GHA overhead starts now"
             discord_notify "🔄 **RinaMC** — Runner mới đã dispatch (\`${_expected_sha:0:8}\`). Server sẽ online lại trong ~3-4 phút." 3447003
 
@@ -1799,13 +1934,25 @@ jobs:
               --arg tun "${TUNNEL_TYPE}" \
               '{"ref":$ref,"inputs":{"tunnel_type":$tun}}')
 
-            curl -fsSL -X POST \
+            # Fix: dùng -w "%{http_code}" thay vì -f để tránh exit 22 khi HTTP error
+            # exit 22 xảy ra khi CI.yml chưa tồn tại trên remote hoặc PAT thiếu actions:write
+            local _http_code
+            _http_code=$(curl -sSL -o /dev/null -w "%{http_code}" -X POST \
               -H "Authorization: token ${FINE_GRAINED_PAT}" \
               -H "Accept: application/vnd.github.v3+json"  \
               -H "Content-Type: application/json"          \
               "https://api.github.com/repos/${REPO}/actions/workflows/CI.yml/dispatches" \
-              -d "$payload"
-            ok "Rotation triggered (tunnel: ${TUNNEL_TYPE})"
+              -d "$payload" 2>/dev/null || echo "000")
+
+            if [[ "$_http_code" == "204" || "$_http_code" == "200" ]]; then
+              ok "trigger_rotation: ✅ dispatched (HTTP ${_http_code}, tunnel: ${TUNNEL_TYPE})"
+              return 0
+            else
+              warn "trigger_rotation: dispatch returned HTTP ${_http_code}"
+              warn "trigger_rotation: Ensure .github/workflows/CI.yml is committed on main AND PAT has actions:write"
+              discord_notify "⚠️ **RinaMC** — trigger_rotation HTTP ${_http_code}. Kiểm tra PAT có quyền \`actions:write\` và file \`.github/workflows/CI.yml\` tồn tại." 16776960
+              return 1  # caller dùng trigger_rotation || true; exit 0 — step không fail
+            fi
           }
 
           download_plugins() {
@@ -1882,10 +2029,26 @@ jobs:
               ok "Server killed after emergency flush"
             fi
 
-            if commit_and_push; then
-              ok "Emergency save committed and pushed"
-              discord_notify "💾 **RinaMC** — Emergency save ✅ done. Server offline." 3066993
+            # BUG FIX: commit_and_push dùng flock -n (non-blocking).
+            # Nếu backup đang chạy, flock fail → subshell exit 0 ("skipping")
+            # → _emergency_save nghĩ thành công → KHÔNG có snapshot → mất dữ liệu.
+            # Fix: dùng flock -w 30 riêng để đợi backup hiện tại hoàn thành,
+            # sau đó gọi commit_and_push bình thường (lúc này flock đã free).
+            # Nếu sau 30s vẫn locked (backup stuck), fallback ngay sang local_snapshot.
+            local _em_push_ok=false
+            if flock -w 30 9; then
+              # Lock acquired: backup trước đó đã xong, release rồi commit bình thường
+              flock -u 9 2>/dev/null || true
+              if commit_and_push; then
+                _em_push_ok=true
+                ok "Emergency save committed and pushed"
+                discord_notify "💾 **RinaMC** — Emergency save ✅ done. Server offline." 3066993
+              fi
             else
+              warn "Emergency: flock timeout 30s — backup may be stuck, skipping to local snapshot"
+            fi 9>"$BACKUP_LOCK"
+
+            if ! $_em_push_ok; then
               warn "Emergency push failed — creating local snapshot as secondary backup"
               if local_snapshot; then
                 discord_notify "⚠️ **RinaMC** — Emergency push failed but LOCAL SNAPSHOT created on runner disk. Runner resets on job end — recover before it expires!" 16776960
@@ -1900,6 +2063,7 @@ jobs:
           trap '_emergency_save' SIGTERM SIGINT
 
           setup_git
+          untrack_plugin_databases  # Fix SQLITE_READONLY_DBMOVED trước khi server start
           download_plugins &        # ── chạy song song với setup_tunnel ──
           PLUGINS_DL_PID=$!
           setup_tunnel              # foreground: resolve tunnel + download playit nếu cần
@@ -1921,13 +2085,20 @@ jobs:
                 --arg ref "main" \
                 --arg tun "${TUNNEL_TYPE}" \
                 '{"ref":$ref,"inputs":{"tunnel_type":$tun}}')
-              curl -fsSL -X POST \
+              # Fix: -w "%{http_code}" thay vì -fsSL để tránh exit 22 khi HTTP error
+              local _http_code
+              _http_code=$(curl -sSL -o /dev/null -w "%{http_code}" -X POST \
                 -H "Authorization: token ${_pat}" \
                 -H "Accept: application/vnd.github.v3+json"  \
                 -H "Content-Type: application/json"          \
                 "https://api.github.com/repos/${REPO}/actions/workflows/CI.yml/dispatches" \
-                -d "$payload"
-              ok "Rotation triggered (tunnel: ${TUNNEL_TYPE})"
+                -d "$payload" 2>/dev/null || echo "000")
+              if [[ "$_http_code" == "204" || "$_http_code" == "200" ]]; then
+                ok "trigger_rotation (sshx-override): ✅ dispatched (HTTP ${_http_code})"
+              else
+                warn "trigger_rotation (sshx-override): HTTP ${_http_code} — check PAT + CI.yml filename"
+                return 1
+              fi
             }
             unset FINE_GRAINED_PAT PLAYIT_SECRET DISCORD_WEBHOOK
             unset BACKUP_PAT SSHX_ENABLED TUNNEL_TYPE_SECRET TUNNEL_TYPE_INPUT
@@ -2142,7 +2313,7 @@ jobs:
                   err "Restart after /stop failed — rotating to fresh runner"
                   discord_notify "🔄 **RinaMC** — Restart after /stop failed. Rotating." 15158332
                   commit_and_push || true
-                  trigger_rotation; exit 0
+                  trigger_rotation || true; exit 0
                 fi
 
               else
@@ -2163,14 +2334,14 @@ jobs:
                   err "Rotating to a fresh runner — check logs for root cause"
                   discord_notify "🔄 **RinaMC** — Crash loop!\n${_crash_report}\nRotating to fresh runner." 15158332
                   rotation_commit_and_push || commit_and_push || true
-                  trigger_rotation; exit 0
+                  trigger_rotation || true; exit 0
                 fi
 
                 if ! pre_restart_validation; then
                   err "pre_restart_validation FAILED — rotating instead of restarting (crash: ${CRASH_TYPE})"
                   discord_notify "🔄 **RinaMC** — ${_crash_report}\n⛔ Pre-restart check FAILED → rotating to fresh runner (tránh crash loop vô ích)." 15158332
                   rotation_commit_and_push || commit_and_push || true
-                  trigger_rotation; exit 0
+                  trigger_rotation || true; exit 0
                 fi
 
                 warn "Server crashed (${CRASH_COUNT}/${MAX_CRASHES}) — restarting in ${CRASH_DELAY}s... [${CRASH_TYPE}]"
@@ -2181,10 +2352,12 @@ jobs:
                   err "Restart after crash failed — rotating"
                   discord_notify "🔄 **RinaMC** — Could not restart after crash. Rotating." 15158332
                   commit_and_push || true
-                  trigger_rotation; exit 0
+                  trigger_rotation || true; exit 0
                 fi
               fi
 
+              # BUG FIX: reset cả LAST_LOG_SIZE để tránh health_check thấy log mới
+              # nhỏ hơn log cũ và báo "stale" ngay sau restart
               LAST_LOG_SIZE=0
               LAST_LOG_CHANGE=$(date +%s)
             fi
@@ -2224,10 +2397,16 @@ jobs:
             exit 0
           fi
 
-          curl -fsSL -X POST \
+          # BUG FIX: dùng http_code thay vì -fsSL để tránh exit 22 khi HTTP error
+          _rerun_code=$(curl -sSL -o /dev/null -w "%{http_code}" -X POST \
             -H "Authorization: token ${FINE_GRAINED_PAT}" \
             -H "Accept: application/vnd.github.v3+json"  \
             -H "Content-Type: application/json"          \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/CI.yml/dispatches" \
-            -d '{"ref":"main"}'
-          echo "♻️ Failure recovery triggered (recent dispatches: ${RECENT_DISPATCH})"
+            -d '{"ref":"main"}' 2>/dev/null || echo "000")
+          if [[ "$_rerun_code" == "204" || "$_rerun_code" == "200" ]]; then
+            echo "♻️ Failure recovery triggered (HTTP ${_rerun_code}, recent dispatches: ${RECENT_DISPATCH})"
+          else
+            echo "⚠️ Rerun dispatch returned HTTP ${_rerun_code} — CI.yml may not be committed on main branch yet."
+            echo "   Please trigger manually from Actions tab."
+          fi
