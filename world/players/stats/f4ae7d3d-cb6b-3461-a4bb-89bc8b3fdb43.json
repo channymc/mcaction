@@ -2,25 +2,40 @@
   "stats": {
     "minecraft:picked_up": {
       "minecraft:yellow_bed": 1,
-      "minecraft:hay_block": 6
+      "minecraft:hay_block": 9
     },
     "minecraft:mined": {
       "minecraft:yellow_bed": 1,
-      "minecraft:hay_block": 7
+      "minecraft:hay_block": 14
     },
     "minecraft:custom": {
-      "minecraft:interact_with_crafting_table": 1,
-      "minecraft:sprint_one_cm": 2010,
-      "minecraft:open_chest": 6,
-      "minecraft:time_since_rest": 1498,
-      "minecraft:fall_one_cm": 1000,
-      "minecraft:walk_one_cm": 3478,
-      "minecraft:total_world_time": 1498,
-      "minecraft:fly_one_cm": 8219,
-      "minecraft:sneak_time": 17,
-      "minecraft:play_time": 1498,
-      "minecraft:jump": 25,
-      "minecraft:time_since_death": 1498
+      "minecraft:interact_with_crafting_table": 4,
+      "minecraft:time_since_rest": 4207,
+      "minecraft:walk_one_cm": 5106,
+      "minecraft:play_time": 4207,
+      "minecraft:jump": 45,
+      "minecraft:time_since_death": 4207,
+      "minecraft:interact_with_furnace": 1,
+      "minecraft:sprint_one_cm": 5757,
+      "minecraft:open_chest": 13,
+      "minecraft:fall_one_cm": 1325,
+      "minecraft:total_world_time": 4207,
+      "minecraft:fly_one_cm": 13203,
+      "minecraft:sneak_time": 32
+    },
+    "minecraft:crafted": {
+      "minecraft:stick": 8,
+      "minecraft:diamond_boots": 1,
+      "minecraft:shield": 1,
+      "minecraft:oak_planks": 16,
+      "minecraft:diamond_axe": 1,
+      "minecraft:diamond_pickaxe": 1,
+      "minecraft:diamond_helmet": 1,
+      "minecraft:diamond_chestplate": 1,
+      "minecraft:diamond_spear": 1,
+      "minecraft:diamond_sword": 1,
+      "minecraft:wheat": 54,
+      "minecraft:diamond_leggings": 1
     }
   },
   "DataVersion": 4790
