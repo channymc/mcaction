@@ -1,0 +1,27 @@
+{
+  "stats": {
+    "minecraft:picked_up": {
+      "minecraft:yellow_bed": 1,
+      "minecraft:hay_block": 6
+    },
+    "minecraft:mined": {
+      "minecraft:yellow_bed": 1,
+      "minecraft:hay_block": 7
+    },
+    "minecraft:custom": {
+      "minecraft:interact_with_crafting_table": 1,
+      "minecraft:sprint_one_cm": 2010,
+      "minecraft:open_chest": 6,
+      "minecraft:time_since_rest": 1498,
+      "minecraft:fall_one_cm": 1000,
+      "minecraft:walk_one_cm": 3478,
+      "minecraft:total_world_time": 1498,
+      "minecraft:fly_one_cm": 8219,
+      "minecraft:sneak_time": 17,
+      "minecraft:play_time": 1498,
+      "minecraft:jump": 25,
+      "minecraft:time_since_death": 1498
+    }
+  },
+  "DataVersion": 4790
+}
