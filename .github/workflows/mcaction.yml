@@ -1,4 +1,4 @@
-name: 🎮 Minecraft Server MCActions v4.2
+name: 🎮 Minecraft Server MCActions v4.3
 
 on:
   push:
@@ -1168,7 +1168,27 @@ jobs:
 
             local now; now=$(date +%s)
 
+            # FIX: Phát hiện 2 loại tunnel chết:
+            # (1) Process die hoàn toàn — kill -0 fail
+            # (2) Process sống nhưng connection chết ngầm — playit log không được ghi >90s
+            # Loại (2) phổ biến với playit trên GitHub Actions: process alive nhưng
+            # kết nối tới playit server bị drop → player bị kick mà script không hay.
+            local _tunnel_actually_dead=false
             if ! kill -0 "${TUNNEL_PID}" 2>/dev/null; then
+              _tunnel_actually_dead=true
+            elif [ "$TUNNEL_TYPE" = "playit" ] && [ -f logs/playit.log ]; then
+              local _playit_log_age
+              _playit_log_age=$(( now - $(stat -c%Y logs/playit.log 2>/dev/null || echo "$now") ))
+              if (( _playit_log_age > 90 )); then
+                warn "restart_tunnel_if_dead: playit log stale ${_playit_log_age}s — connection likely dead (process alive but disconnected)"
+                discord_notify "⚠️ **RinaMC** — Playit tunnel connection stale (${_playit_log_age}s không có activity). Restarting tunnel..." 16776960
+                kill "${TUNNEL_PID}" 2>/dev/null || true
+                sleep 2
+                _tunnel_actually_dead=true
+              fi
+            fi
+
+            if $_tunnel_actually_dead; then
               TUNNEL_ALIVE_SINCE=0
 
               local wait_sec=$(( TUNNEL_BACKOFF * (1 << (TUNNEL_FAIL_COUNT < 4 ? TUNNEL_FAIL_COUNT : 4)) ))
@@ -1207,12 +1227,17 @@ jobs:
             (
               flock -n 9 || { warn "Backup already running — skipping this cycle"; exit 0; }
 
+              # FIX: Hạ ưu tiên I/O + CPU của tiến trình backup xuống thấp nhất
+              # → Java server luôn được ưu tiên, tránh TPS drop gây văng player
+              ionice -c 3 -P $$ 2>/dev/null || true
+              renice -n 10 -p $$ 2>/dev/null || true
+
               mc_cmd "save-all flush"
 
               local _log_before=0 _save_confirmed=false _wait_save=0
               [ -f logs/latest.log ] && _log_before=$(wc -l < logs/latest.log 2>/dev/null || echo 0)
               sleep 1
-              while (( _wait_save < 9 )); do
+              while (( _wait_save < 20 )); do
                 if [ -f logs/latest.log ] && \
                    tail -n +"$(( _log_before + 1 ))" logs/latest.log 2>/dev/null \
                      | grep -qi "Saved the game\|saved the world\|save complete"; then
@@ -2194,7 +2219,7 @@ jobs:
           LAST_SQUASH=0
           LAST_EXT_BACKUP=0
           LAST_HEALTH_CHECK=0
-          SAVE_INTERVAL=120
+          SAVE_INTERVAL=300
           GC_INTERVAL=1800
           SQUASH_INTERVAL=900
           EXT_BACKUP_INTERVAL=1800
